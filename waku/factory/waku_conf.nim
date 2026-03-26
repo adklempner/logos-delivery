@@ -53,6 +53,7 @@ type MixConf* = ref object
   mixnodes*: seq[MixNodePubInfo]
   enableSpamProtection*: bool
   userMessageLimit*: Option[int]
+  enableWarmup*: bool
 
 type KademliaDiscoveryConf* = object
   bootstrapNodes*: seq[(PeerId, seq[MultiAddress])]
@@ -140,6 +141,7 @@ type WakuConf* {.requiresInit.} = ref object
   peerStoreCapacity*: Option[int]
   # TODO: should clearly be a uint
   maxConnections*: int
+  maxConnsPerPeer*: Option[int]
 
   agentString*: string
 

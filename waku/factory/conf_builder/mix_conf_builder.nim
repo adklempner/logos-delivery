@@ -14,9 +14,10 @@ type MixConfBuilder* = object
   mixNodes: seq[MixNodePubInfo]
   enableSpamProtection: bool
   userMessageLimit: Option[int]
+  enableWarmup: bool
 
 proc init*(T: type MixConfBuilder): MixConfBuilder =
-  MixConfBuilder()
+  MixConfBuilder(enableWarmup: true)
 
 proc withEnabled*(b: var MixConfBuilder, enabled: bool) =
   b.enabled = some(enabled)
@@ -33,6 +34,9 @@ proc withEnableSpamProtection*(b: var MixConfBuilder, enable: bool) =
 proc withUserMessageLimit*(b: var MixConfBuilder, limit: int) =
   b.userMessageLimit = some(limit)
 
+proc withEnableWarmup*(b: var MixConfBuilder, enable: bool) =
+  b.enableWarmup = enable
+
 proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
   if not b.enabled.get(false):
     return ok(none[MixConf]())
@@ -43,7 +47,8 @@ proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
       return ok(
         some(MixConf(mixKey: mixPrivKey, mixPubKey: mixPubKey, mixnodes: b.mixNodes,
             enableSpamProtection: b.enableSpamProtection,
-            userMessageLimit: b.userMessageLimit))
+            userMessageLimit: b.userMessageLimit,
+            enableWarmup: b.enableWarmup))
       )
     else:
       let (mixPrivKey, mixPubKey) = generateKeyPair().valueOr:
@@ -51,5 +56,6 @@ proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
       return ok(
         some(MixConf(mixKey: mixPrivKey, mixPubKey: mixPubKey, mixnodes: b.mixNodes,
             enableSpamProtection: b.enableSpamProtection,
-            userMessageLimit: b.userMessageLimit))
+            userMessageLimit: b.userMessageLimit,
+            enableWarmup: b.enableWarmup))
       )

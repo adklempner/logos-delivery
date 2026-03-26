@@ -122,6 +122,7 @@ type WakuConfBuilder* = object
   peerPersistence: Option[bool]
   peerStoreCapacity: Option[int]
   maxConnections: Option[int]
+  maxConnsPerPeer: Option[int]
   colocationLimit: Option[int]
 
   agentString: Option[string]
@@ -215,6 +216,9 @@ proc withPeerStoreCapacity*(b: var WakuConfBuilder, peerStoreCapacity: int) =
 
 proc withMaxConnections*(b: var WakuConfBuilder, maxConnections: int) =
   b.maxConnections = some(maxConnections)
+
+proc withMaxConnsPerPeer*(b: var WakuConfBuilder, maxConnsPerPeer: int) =
+  b.maxConnsPerPeer = some(maxConnsPerPeer)
 
 proc withDnsAddrsNameServers*(
     b: var WakuConfBuilder, dnsAddrsNameServers: seq[IpAddress]
@@ -708,6 +712,7 @@ proc build*(
     peerPersistence: peerPersistence,
     peerStoreCapacity: builder.peerStoreCapacity,
     maxConnections: maxConnections,
+    maxConnsPerPeer: builder.maxConnsPerPeer,
     agentString: agentString,
     colocationLimit: colocationLimit,
     maxRelayPeers: builder.maxRelayPeers,

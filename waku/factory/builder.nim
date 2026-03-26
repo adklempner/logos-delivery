@@ -14,6 +14,7 @@ import
   ../discovery/waku_discv5,
   ../waku_node,
   ../node/peer_manager,
+  ../node/waku_switch,
   ../common/rate_limit/setting,
   ../common/utils/parse_size_units,
   ../common/broker/broker_context
@@ -37,6 +38,7 @@ type
 
     # Libp2p switch
     switchMaxConnections: Option[int]
+    switchMaxConnsPerPeer: Option[int]
     switchNameResolver: Option[NameResolver]
     switchAgentString: Option[string]
     switchSslSecureKey: Option[string]
@@ -138,6 +140,7 @@ proc withCircuitRelay*(builder: var WakuNodeBuilder, circuitRelay: Relay) =
 proc withSwitchConfiguration*(
     builder: var WakuNodeBuilder,
     maxConnections = none(int),
+    maxConnsPerPeer = none(int),
     nameResolver: NameResolver = nil,
     sendSignedPeerRecord = false,
     secureKey = none(string),
@@ -145,6 +148,7 @@ proc withSwitchConfiguration*(
     agentString = none(string),
 ) =
   builder.switchMaxConnections = maxConnections
+  builder.switchMaxConnsPerPeer = maxConnsPerPeer
   builder.switchSendSignedPeerRecord = some(sendSignedPeerRecord)
   builder.switchSslSecureKey = secureKey
   builder.switchSslSecureCert = secureCert
@@ -190,6 +194,7 @@ proc build*(builder: WakuNodeBuilder): Result[WakuNode, string] =
       transportFlags = {ServerFlags.ReuseAddr, ServerFlags.TcpNoDelay},
       rng = rng,
       maxConnections = builder.switchMaxConnections.get(builders.MaxConnections),
+      maxConnsPerPeer = builder.switchMaxConnsPerPeer.get(waku_switch.MaxConnectionsPerPeer),
       wssEnabled = builder.netConfig.get().wssEnabled,
       secureKeyPath = builder.switchSslSecureKey.get(""),
       secureCertPath = builder.switchSslSecureCert.get(""),

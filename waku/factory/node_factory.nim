@@ -94,6 +94,7 @@ proc initNode(
   builder.withPeerStorage(pStorage, capacity = conf.peerStoreCapacity)
   builder.withSwitchConfiguration(
     maxConnections = some(conf.maxConnections.int),
+    maxConnsPerPeer = conf.maxConnsPerPeer,
     secureKey = secureKey,
     secureCert = secureCert,
     nameResolver = nameResolver,
@@ -169,7 +170,8 @@ proc setupProtocols(
     let mixConf = conf.mixConf.get()
     (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes,
         enableSpamProtection = mixConf.enableSpamProtection,
-        userMessageLimit = mixConf.userMessageLimit)).isOkOr:
+        userMessageLimit = mixConf.userMessageLimit,
+        enableWarmup = mixConf.enableWarmup)).isOkOr:
       return err("failed to mount waku mix protocol: " & $error)
 
   # Setup extended kademlia discovery

@@ -65,7 +65,7 @@ proc newWakuSwitch*(
     maxConnections = MaxConnections,
     maxIn = -1,
     maxOut = -1,
-    maxConnsPerPeer = 2,  # Allow dedicated mix connection alongside relay
+    maxConnsPerPeer = MaxConnectionsPerPeer,
     nameResolver: NameResolver = nil,
     sendSignedPeerRecord = false,
     wssEnabled: bool = false,
