@@ -461,6 +461,8 @@ write_node_config() {
   "mix": true,
   "enableSpamProtection": true,
   "colocationLimit": 0,
+  "maxConnsPerPeer": 2,
+  "enableWarmup": false,
   "logLevel": "TRACE"
 }
 EOF
