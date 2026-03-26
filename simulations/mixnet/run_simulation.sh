@@ -11,6 +11,60 @@ RLN_PROJECT_DIR="$(cd "$DELIVERY_DIR/.." && pwd)"
 export RISC0_DEV_MODE=1
 export TMPDIR=/tmp
 
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+die() {
+    echo "  FATAL: $*" >&2
+    exit 1
+}
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $*"
+}
+
+wait_for_port() {
+    local port=$1 timeout=${2:-300} pid=${3:-}
+    for _ in $(seq 1 "$timeout"); do
+        if nc -z 127.0.0.1 "$port" 2>/dev/null; then
+            return 0
+        fi
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+wait_for_log_pattern() {
+    local log_file=$1 pattern=$2 count=$3 timeout=${4:-90} pid=${5:-}
+    for _ in $(seq 1 "$timeout"); do
+        if [ -f "$log_file" ]; then
+            local n
+            n=$(grep "$pattern" "$log_file" 2>/dev/null | wc -l | tr -d ' ')
+            [ "${n:-0}" -ge "$count" ] && return 0
+        fi
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+create_module_manifest() {
+    local dir=$1 name=$2 main_lib=$3 deps=$4
+    local deps_json="[]"
+    if [ -n "$deps" ]; then
+        deps_json=$(echo "$deps" | tr ',' '\n' | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//' | sed 's/^/[/;s/$/]/')
+    fi
+    cat > "$dir/manifest.json" <<EOF
+{"name":"$name","version":"1.0.0","type":"core","main":{"$PLATFORM":"$main_lib"},"dependencies":$deps_json,"capabilities":[]}
+EOF
+}
+
 # --- Node identity constants (from config*.toml) ---
 NODEKEYS=(
     "f98e3fba96c32e8d1967d460f1b79457380e1a895f7971cecc8528abe733781a"
@@ -18,6 +72,8 @@ NODEKEYS=(
     "ed54db994682e857d77cd6fb81be697382dc43aa5cd78e16b0ec8098549f860e"
     "42f96f29f2d6670938b0864aced65a332dcf5774103b4c44ec4d0ea4ef3c47d6"
     "3ce887b3c34b7a92dd2868af33941ed1dbec4893b054572cd5078da09dd923d4"
+    "cb6fe589db0e5d5b48f7e82d33093e4d9d35456f4aaffc2322c473a173b2ac49"
+    "35eace7ccb246f20c487e05015ca77273d8ecaed0ed683de3d39bf4f69336feb"
 )
 MIXKEYS=(
     "a87db88246ec0eedda347b9b643864bee3d6933eb15ba41e6d58cb678d813258"
@@ -25,6 +81,8 @@ MIXKEYS=(
     "b858ac16bbb551c4b2973313b1c8c8f7ea469fca03f1608d200bbf58d388ec7f"
     "d8bd379bb394b0f22dd236d63af9f1a9bc45266beffc3fbbe19e8b6575f2535b"
     "780fff09e51e98df574e266bf3266ec6a3a1ddfcf7da826a349a29c137009d49"
+    "fe68e1ff4a6aa7115cfcff33f68a0c1767d6865a1fd56ec05b40dffba9653fe5"
+    "88f02c1bcd8eedb697e8fd818e6f1617752488e048b37730fa18e3fb3460f57e"
 )
 PEER_IDS=(
     "16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRHKYdLdAfjgbWM6o"
@@ -32,7 +90,10 @@ PEER_IDS=(
     "16Uiu2HAmTEDHwAziWUSz6ZE23h5vxG2o4Nn7GazhMor4bVuMXTrA"
     "16Uiu2HAmPwRKZajXtfb1Qsv45VVfRZgK3ENdfmnqzSrVm3BczF6f"
     "16Uiu2HAmRhxmCHBYdXt1RibXrjAUNJbduAhzaTHwFCZT4qWnqZAu"
+    "16Uiu2HAm1QxSjNvNbsT2xtLjRGAsBLVztsJiTHr9a3EK96717hpj"
+    "16Uiu2HAmC9h26U1C83FJ5xpE32ghqya8CaZHX1Y7qpfHNnRABscN"
 )
+NUM_CHAT_CLIENTS=1
 MIX_PUBKEYS=(
     "9d09ce624f76e8f606265edb9cca2b7de9b41772a6d784bddaf92ffa8fba7d2c"
     "9231e86da6432502900a84f867004ce78632ab52cd8e30b1ec322cd795710c2a"
@@ -42,7 +103,7 @@ MIX_PUBKEYS=(
 )
 BASE_TCP_PORT=60001
 BASE_DISC_PORT=9001
-NUM_NODES=5
+NUM_NODES=4
 
 CONTENT_TOPIC="/toy-chat/2/baixa-chiado/proto"
 
@@ -109,33 +170,24 @@ fi
 
 rm -rf "$RLN_PROJECT_DIR/lssa/rocksdb"
 
-echo "  Building sequencer (first run may take several minutes)..."
-(cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3) || {
-    echo "  FATAL: sequencer build failed"
-    exit 1
-}
+log "  Building sequencer (first run may take several minutes)..."
+(cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3) || \
+    die "sequencer build failed"
 
 SEQUENCER_BIN="$RLN_PROJECT_DIR/lssa/target/debug/sequencer_runner"
 (cd "$RLN_PROJECT_DIR/lssa" && env RUST_LOG=info "$SEQUENCER_BIN" sequencer_runner/configs/debug) >/dev/null 2>&1 &
 SEQUENCER_PID=$!
 echo "  PID: $SEQUENCER_PID"
 
-echo "  Waiting for port 3040..."
-for i in $(seq 1 300); do
-    if nc -z 127.0.0.1 3040 2>/dev/null; then
-        echo "  Sequencer ready."
-        break
-    fi
+log "  Waiting for port 3040..."
+if ! wait_for_port 3040 300 "$SEQUENCER_PID"; then
     if ! kill -0 "$SEQUENCER_PID" 2>/dev/null; then
-        echo "  ERROR: Sequencer exited unexpectedly."
-        exit 1
+        die "Sequencer exited unexpectedly"
+    else
+        die "Sequencer did not start within 300s"
     fi
-    sleep 1
-done
-if ! nc -z 127.0.0.1 3040 2>/dev/null; then
-    echo "  ERROR: Sequencer did not start within 300s."
-    exit 1
 fi
+log "  Sequencer ready."
 
 # ---------- Phase 2: Deploy programs ----------
 echo "[2/7] Deploying programs..."
@@ -145,16 +197,11 @@ LEZ_RLN_DIR="$RLN_PROJECT_DIR/lez-rln"
 GUEST_BIN="$LEZ_RLN_DIR/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/rln_registration.bin"
 if [ ! -f "$GUEST_BIN" ]; then
     if ! command -v cargo-risczero &>/dev/null; then
-        echo "  FATAL: zkVM guest binaries not found and cargo-risczero not installed."
-        echo "  Install with: cargo install cargo-risczero && cargo risczero install"
-        echo "  Requires Docker running for cross-compilation."
-        exit 1
+        die "zkVM guest binaries not found and cargo-risczero not installed.\n  Install with: cargo install cargo-risczero && cargo risczero install\n  Requires Docker running for cross-compilation."
     fi
-    echo "  Building zkVM guest programs (first run may take several minutes)..."
-    (cd "$LEZ_RLN_DIR" && cargo risczero build --manifest-path methods/guest/Cargo.toml 2>&1 | tail -10) || {
-        echo "  FATAL: guest program build failed. Is Docker running?"
-        exit 1
-    }
+    log "  Building zkVM guest programs (first run may take several minutes)..."
+    (cd "$LEZ_RLN_DIR" && cargo risczero build --manifest-path methods/guest/Cargo.toml 2>&1 | tail -10) || \
+        die "guest program build failed. Is Docker running?"
 fi
 
 export NSSA_WALLET_HOME_DIR="$RLN_PROJECT_DIR/dev"
@@ -177,40 +224,57 @@ echo "  Programs deployed."
 echo "  Tree main account: $TREE_MAIN_ACCOUNT"
 
 # ---------- Phase 3: Register 5 members & generate keystores ----------
-echo "[3/7] Registering $NUM_NODES members and generating keystores..."
+TOTAL_MEMBERS=$((NUM_NODES + NUM_CHAT_CLIENTS))
+echo "[3/7] Registering $TOTAL_MEMBERS members and generating keystores..."
 
 WORK_DIR=$(mktemp -d)
 
 REGISTER_BIN="$LEZ_RLN_DIR/target/release/register_member"
 (cd "$LEZ_RLN_DIR" && cargo build --release --bin register_member 2>&1 | tail -3)
-if [ ! -f "$REGISTER_BIN" ]; then
-    echo "  FATAL: register_member not found at $REGISTER_BIN"
-    exit 1
-fi
+[ -f "$REGISTER_BIN" ] || die "register_member not found at $REGISTER_BIN"
 
 MANIFEST_FILE="$WORK_DIR/manifest.json"
-echo "[" > "$MANIFEST_FILE"
-
 LEAF_INDICES=()
 IDENTITY_SECRETS=()
 CONFIG_ACCOUNT=""
 
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    echo "  Registering node $((i+1))/$NUM_NODES..."
+# Register all members in a single batch call
+REG_OUTPUT="$WORK_DIR/reg_output.txt"
+log "  Registering $TOTAL_MEMBERS members..."
+(cd "$LEZ_RLN_DIR" && "$REGISTER_BIN" --count "$TOTAL_MEMBERS" > "$REG_OUTPUT" 2>&1) || {
+    cat "$REG_OUTPUT" 2>/dev/null || true
+    die "register_member failed"
+}
 
-    OUTPUT=$(cd "$LEZ_RLN_DIR" && "$REGISTER_BIN" 2>&1) || {
-        echo "  FATAL: register_member failed:"
-        echo "$OUTPUT"
-        exit 1
-    }
+# Parse batch output into per-member arrays
+REG_OUTPUTS=()
+# Split output into per-member chunks (3 lines each: CONFIG_ACCOUNT, LEAF_INDEX, IDENTITY_SECRET_HASH)
+MEMBER_IDX=0
+while IFS= read -r line; do
+    case "$line" in
+        CONFIG_ACCOUNT=*)
+            REG_OUTPUTS[$MEMBER_IDX]="$WORK_DIR/reg_output_$MEMBER_IDX.txt"
+            echo "$line" > "${REG_OUTPUTS[$MEMBER_IDX]}"
+            ;;
+        LEAF_INDEX=*|IDENTITY_SECRET_HASH=*)
+            echo "$line" >> "${REG_OUTPUTS[$MEMBER_IDX]}"
+            if [[ "$line" == IDENTITY_SECRET_HASH=* ]]; then
+                MEMBER_IDX=$((MEMBER_IDX + 1))
+            fi
+            ;;
+    esac
+done < "$REG_OUTPUT"
+
+# Parse outputs and build manifest (sequential to maintain order)
+echo "[" > "$MANIFEST_FILE"
+for i in $(seq 0 $((TOTAL_MEMBERS - 1))); do
+    OUTPUT=$(cat "${REG_OUTPUTS[$i]}")
     CONFIG_ACCOUNT=$(echo "$OUTPUT" | grep "^CONFIG_ACCOUNT=" | cut -d= -f2)
     LEAF_INDEX=$(echo "$OUTPUT" | grep "^LEAF_INDEX=" | cut -d= -f2)
     IDENTITY_SECRET=$(echo "$OUTPUT" | grep "^IDENTITY_SECRET_HASH=" | cut -d= -f2)
 
     if [ -z "$CONFIG_ACCOUNT" ] || [ -z "$LEAF_INDEX" ] || [ -z "$IDENTITY_SECRET" ]; then
-        echo "  FATAL: Failed to parse register_member output:"
-        echo "$OUTPUT"
-        exit 1
+        die "Failed to parse register_member output for member $i:\n$OUTPUT"
     fi
 
     LEAF_INDICES+=("$LEAF_INDEX")
@@ -226,10 +290,12 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
     "configAccount": "$CONFIG_ACCOUNT"
   }
 EOF
-    echo "    leaf=$LEAF_INDEX"
+    echo "    Member $((i+1)): leaf=$LEAF_INDEX"
+    rm -f "${REG_OUTPUTS[$i]}"
 done
 
 echo "]" >> "$MANIFEST_FILE"
+log "  All $TOTAL_MEMBERS members registered"
 echo "  Config account: $CONFIG_ACCOUNT"
 
 # Generate keystores
@@ -262,15 +328,9 @@ nim c -d:release --mm:refc \
     -o:"$SETUP_KS_BIN" \
     "$SCRIPT_DIR/setup_keystores.nim" 2>&1 | tail -10
 
-if [ ! -f "$SETUP_KS_BIN" ]; then
-    echo "  FATAL: Failed to compile setup_keystores.nim"
-    exit 1
-fi
+[ -f "$SETUP_KS_BIN" ] || die "Failed to compile setup_keystores.nim"
 
-(cd "$WORK_DIR" && "$SETUP_KS_BIN" "$MANIFEST_FILE") || {
-    echo "  FATAL: setup_keystores failed"
-    exit 1
-}
+(cd "$WORK_DIR" && "$SETUP_KS_BIN" "$MANIFEST_FILE") || die "setup_keystores failed"
 KEYSTORE_COUNT=$(ls -1 "$WORK_DIR"/rln_keystore_*.json 2>/dev/null | wc -l | tr -d ' ')
 echo "  Keystores: $KEYSTORE_COUNT"
 
@@ -280,53 +340,49 @@ echo "[4/7] Building modules (if needed)..."
 LOGOSCORE="${LOGOSCORE:-$(nix build github:logos-co/logos-liblogos/7df6195 --override-input logos-cpp-sdk github:logos-co/logos-cpp-sdk/a4bd66c --no-link --print-out-paths)/bin/logoscore}"
 WALLET_MODULE_RESULT="$RLN_PROJECT_DIR/logos-rln-module/result-wallet"
 
+MIX_SIM_MODULE_RESULT="$RLN_PROJECT_DIR/mix-simulation-module/result"
+
 NEED_BUILD=0
 [ -f "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" ] || NEED_BUILD=1
 [ -f "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" ] || NEED_BUILD=1
 [ -f "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/delivery_module_plugin.$EXT" ] || NEED_BUILD=1
+[ -f "$MIX_SIM_MODULE_RESULT/lib/libmix_simulation_module.$EXT" ] || NEED_BUILD=1
 
 if [ "$NEED_BUILD" -eq 1 ]; then
-    echo "  Some modules missing — running build_modules.sh..."
-    bash "$RLN_PROJECT_DIR/build_modules.sh" || {
-        echo "  FATAL: Module build failed."
-        exit 1
-    }
+    log "  Some modules missing — running build_modules.sh..."
+    bash "$RLN_PROJECT_DIR/build_modules.sh" || die "Module build failed"
 fi
 
-[ -f "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" ] || { echo "  FATAL: RLN module not found after build."; exit 1; }
-[ -f "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" ] || { echo "  FATAL: Wallet module not found after build."; exit 1; }
-[ -f "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/delivery_module_plugin.$EXT" ] || { echo "  FATAL: Delivery module not found after build."; exit 1; }
-echo "  All modules present."
-
-# Build chat2mix if not present
-CHAT2MIX="$DELIVERY_DIR/build/chat2mix"
-if [ ! -f "$CHAT2MIX" ] || [ "${REBUILD_NIM:-0}" = "1" ]; then
-    echo "  Building chat2mix..."
-    (cd "$DELIVERY_DIR" && make chat2mix 2>&1 | tail -5) || {
-        echo "  WARNING: chat2mix build failed — chat clients won't be available"
-    }
-else
-    echo "  chat2mix already built."
-fi
+[ -f "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" ] || die "RLN module not found after build"
+[ -f "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" ] || die "Wallet module not found after build"
+[ -f "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/delivery_module_plugin.$EXT" ] || die "Delivery module not found after build"
+[ -f "$MIX_SIM_MODULE_RESULT/lib/libmix_simulation_module.$EXT" ] || die "Mix simulation module not found after build"
+log "  All modules present."
 
 # ---------- Phase 5: Stage modules ----------
-echo "[5/7] Staging modules for $NUM_NODES instances..."
+TOTAL_NODES=$((NUM_NODES + NUM_CHAT_CLIENTS))
+echo "[5/7] Staging modules for $TOTAL_NODES instances..."
 
 stage_modules() {
     local mdir
     mdir=$(mktemp -d)
 
+    # Wallet module
     mkdir -p "$mdir/liblogos_execution_zone_wallet_module"
     cp -L "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" "$mdir/liblogos_execution_zone_wallet_module/"
     [ -f "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" ] && \
       cp -L "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" "$mdir/liblogos_execution_zone_wallet_module/"
-    echo "{\"name\":\"liblogos_execution_zone_wallet_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_execution_zone_wallet_module.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$mdir/liblogos_execution_zone_wallet_module/manifest.json"
+    create_module_manifest "$mdir/liblogos_execution_zone_wallet_module" \
+        "liblogos_execution_zone_wallet_module" "liblogos_execution_zone_wallet_module.$EXT" ""
 
+    # RLN module
     mkdir -p "$mdir/liblogos_rln_module"
     cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" "$mdir/liblogos_rln_module/"
     cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblez_rln_ffi.$EXT" "$mdir/liblogos_rln_module/" 2>/dev/null || true
-    echo "{\"name\":\"liblogos_rln_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_rln_module.$EXT\"},\"dependencies\":[\"liblogos_execution_zone_wallet_module\"],\"capabilities\":[]}" > "$mdir/liblogos_rln_module/manifest.json"
+    create_module_manifest "$mdir/liblogos_rln_module" \
+        "liblogos_rln_module" "liblogos_rln_module.$EXT" "liblogos_execution_zone_wallet_module"
 
+    # Delivery module
     mkdir -p "$mdir/delivery_module"
     cp -L "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/delivery_module_plugin.$EXT" "$mdir/delivery_module/"
     [ -f "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/liblogosdelivery.$EXT" ] && \
@@ -334,132 +390,269 @@ stage_modules() {
     for pq in "$RLN_PROJECT_DIR"/logos-delivery-module/result/lib/libpq*; do
         [ -f "$pq" ] && cp -L "$pq" "$mdir/delivery_module/"
     done
-    echo "{\"name\":\"delivery_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"delivery_module_plugin.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$mdir/delivery_module/manifest.json"
+    create_module_manifest "$mdir/delivery_module" \
+        "delivery_module" "delivery_module_plugin.$EXT" ""
+
+    # Mix simulation module
+    mkdir -p "$mdir/mix_simulation_module"
+    cp -L "$MIX_SIM_MODULE_RESULT/lib/libmix_simulation_module.$EXT" "$mdir/mix_simulation_module/"
+    create_module_manifest "$mdir/mix_simulation_module" \
+        "mix_simulation_module" "libmix_simulation_module.$EXT" "delivery_module,liblogos_rln_module"
 
     echo "$mdir"
 }
 
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    MDIR=$(stage_modules)
+# Stage modules in parallel
+STAGING_PIDS=()
+STAGING_OUTPUTS=()
+for i in $(seq 0 $((TOTAL_NODES - 1))); do
+    STAGING_OUTPUTS[$i]=$(mktemp)
+    (stage_modules > "${STAGING_OUTPUTS[$i]}") &
+    STAGING_PIDS+=($!)
+done
+
+# Wait for all staging to complete
+for i in $(seq 0 $((TOTAL_NODES - 1))); do
+    wait "${STAGING_PIDS[$i]}" || die "Module staging for node $i failed"
+    MDIR=$(cat "${STAGING_OUTPUTS[$i]}")
     MODULES_DIRS+=("$MDIR")
+    rm -f "${STAGING_OUTPUTS[$i]}"
     echo "  Node $i modules: $MDIR"
 done
 
-LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module"
+LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module,mix_simulation_module"
 WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
 
-# ---------- Phase 6: Start 5 logoscore instances ----------
-echo "[6/7] Starting $NUM_NODES logoscore instances..."
+# ---------- Phase 6: Start logoscore instances ----------
+echo "[6/7] Starting $TOTAL_NODES logoscore instances ($NUM_NODES core + $NUM_CHAT_CLIENTS edge)..."
 
-# Write node configs and start instances
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    TCP_PORT=$((BASE_TCP_PORT + i))
-    DISC_PORT=$((BASE_DISC_PORT + i))
-    LEAF_INDEX="${LEAF_INDICES[$i]}"
-    NODE_CONFIG="$WORK_DIR/node${i}_config.json"
-    LOG_FILE="$WORK_DIR/node${i}.log"
+# Helper: write node config file
+write_node_config() {
+    local i=$1 config_file=$2
+    local tcp_port=$((BASE_TCP_PORT + i))
+    local disc_port=$((BASE_DISC_PORT + i))
+    local entry_nodes="[]"
+    [ "$i" -gt 0 ] && entry_nodes="[\"/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}\"]"
 
-    # Bootstrap: node 0 has no entry nodes, others bootstrap to node 0
-    if [ "$i" -eq 0 ]; then
-        ENTRY_NODES="[]"
-    else
-        ENTRY_NODES="[\"/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}\"]"
-    fi
-
-    # Build mixNodes array: all OTHER nodes' multiaddr:mixPubKey
-    MIX_NODES_JSON=""
+    local mix_nodes_json=""
     for j in $(seq 0 $((NUM_NODES - 1))); do
         [ "$j" -eq "$i" ] && continue
-        J_PORT=$((BASE_TCP_PORT + j))
-        [ -n "$MIX_NODES_JSON" ] && MIX_NODES_JSON="$MIX_NODES_JSON, "
-        MIX_NODES_JSON="$MIX_NODES_JSON\"/ip4/127.0.0.1/tcp/$J_PORT/p2p/${PEER_IDS[$j]}:${MIX_PUBKEYS[$j]}\""
+        local j_port=$((BASE_TCP_PORT + j))
+        [ -n "$mix_nodes_json" ] && mix_nodes_json="$mix_nodes_json, "
+        mix_nodes_json="$mix_nodes_json\"/ip4/127.0.0.1/tcp/$j_port/p2p/${PEER_IDS[$j]}:${MIX_PUBKEYS[$j]}\""
     done
 
-    cat > "$NODE_CONFIG" <<EOF
+    local node_mode="Core"
+    [ "$i" -ge "$NUM_NODES" ] && node_mode="Edge"
+
+    cat > "$config_file" <<EOF
 {
-  "mode": "Core",
-  "clusterId": 2,
-  "numShardsInNetwork": 1,
-  "entryNodes": $ENTRY_NODES,
+  "mode": "$node_mode",
+  "clusterId": 42,
+  "numShardsInNetwork": 8,
+  "entryNodes": $entry_nodes,
   "maxMessageSize": "150 KiB",
   "listenAddress": "127.0.0.1",
-  "tcpPort": $TCP_PORT,
-  "discv5UdpPort": $DISC_PORT,
+  "tcpPort": $tcp_port,
+  "discv5UdpPort": $disc_port,
   "nodekey": "${NODEKEYS[$i]}",
   "mixkey": "${MIXKEYS[$i]}",
-  "mixnodes": [$MIX_NODES_JSON],
+  "mixnodes": [$mix_nodes_json],
   "mix": true,
   "enableSpamProtection": true,
+  "colocationLimit": 0,
   "logLevel": "TRACE"
 }
 EOF
+}
 
-    echo "  Starting node $i (port $TCP_PORT, leaf $LEAF_INDEX)..."
+# Helper: start a single node (sets LAST_NODE_PID)
+start_node() {
+    local i=$1
+    local node_config="$WORK_DIR/node${i}_config.json"
+    local log_file="$WORK_DIR/node${i}.log"
+    local leaf_index="${LEAF_INDICES[$i]}"
 
-    (cd "$WORK_DIR" && TMPDIR=/tmp "$LOGOSCORE" -m "${MODULES_DIRS[$i]}" -l "$LOAD_ORDER" \
-        -c "$WALLET_CALL" \
-        -c "delivery_module.createNode(@$NODE_CONFIG)" \
-        -c "delivery_module.start()" \
-        -c "delivery_module.subscribe($CONTENT_TOPIC)" \
-        -c "delivery_module.setRlnConfig($CONFIG_ACCOUNT,$LEAF_INDEX)" \
-        -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
-        -c "liblogos_rln_module.start_merkle_proof_broadcast($CONFIG_ACCOUNT,$LEAF_INDEX)" \
-        </dev/null >"$LOG_FILE" 2>&1) &
-    INSTANCE_PIDS+=($!)
-    echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
+    write_node_config "$i" "$node_config"
 
-    # Wait for all 7 -c calls to succeed
-    echo "  Waiting for node $i to initialize..."
-    for j in $(seq 1 90); do
-        N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}
-        [ "$N" -ge 7 ] && break
-        if ! kill -0 "${INSTANCE_PIDS[$i]}" 2>/dev/null; then
-            N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}
-            echo "  ERROR: Node $i exited after $N/7 calls. Method call lines:"
-            grep 'Method call' "$LOG_FILE"
-            echo "  --- Last 15 log lines ---"
-            tail -15 "$LOG_FILE"
-            exit 1
-        fi
-        sleep 1
-    done
-    if [ "$N" -lt 7 ]; then
-        echo "  ERROR: Node $i did not initialize ($N/7 calls). Log:"
-        grep 'Method call\|Error' "$LOG_FILE" | tail -10
-        exit 1
+    if [ "$i" -ge "$NUM_NODES" ]; then
+        # Edge nodes use mix-simulation-module runner
+        local runner_config="$WORK_DIR/runner${i}_config.json"
+        cat > "$runner_config" <<REOF
+{
+  "delivery": $(cat "$node_config"),
+  "contentTopic": "$CONTENT_TOPIC",
+  "rln": {
+    "configAccountId": "$CONFIG_ACCOUNT",
+    "leafIndex": $leaf_index
+  },
+  "simulation": {
+    "peerDiscoveryDelayMs": 45000,
+    "messageCount": 3,
+    "messageDelayMs": 2000,
+    "payload": "e2e_mix_test"
+  }
+}
+REOF
+        TMPDIR=/tmp "$LOGOSCORE" -m "${MODULES_DIRS[$i]}" -l "$LOAD_ORDER" \
+            -c "$WALLET_CALL" \
+            -c "mix_simulation_module.start(@$runner_config)" \
+            </dev/null >"$log_file" 2>&1 &
+    else
+        # Core nodes use direct -c calls
+        TMPDIR=/tmp "$LOGOSCORE" -m "${MODULES_DIRS[$i]}" -l "$LOAD_ORDER" \
+            -c "$WALLET_CALL" \
+            -c "delivery_module.createNode(@$node_config)" \
+            -c "delivery_module.start()" \
+            -c "delivery_module.subscribe($CONTENT_TOPIC)" \
+            -c "delivery_module.setRlnConfig($CONFIG_ACCOUNT,$leaf_index)" \
+            -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
+            -c "liblogos_rln_module.start_merkle_proof_broadcast($CONFIG_ACCOUNT,$leaf_index)" \
+            </dev/null >"$log_file" 2>&1 &
     fi
-    echo "  Node $i ready ($N/7 calls)."
+    LAST_NODE_PID=$!
+}
 
-    # Pause between nodes to avoid resource contention
-    sleep 3
-done
+# Helper: wait for node to initialize
+wait_for_node_init() {
+    local i=$1 pid=$2
+    local log_file="$WORK_DIR/node${i}.log"
+    local expected_calls=7
+    [ "$i" -ge "$NUM_NODES" ] && expected_calls=2
+
+    if ! wait_for_log_pattern "$log_file" "^Method call successful" "$expected_calls" 90 "$pid"; then
+        local n=0
+        [ -f "$log_file" ] && n=$(grep '^Method call successful' "$log_file" 2>/dev/null | wc -l | tr -d ' ')
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "  ERROR: Node $i exited after ${n:-0}/$expected_calls calls"
+            grep 'Method call' "$log_file" 2>/dev/null || true
+            tail -15 "$log_file" 2>/dev/null || true
+        else
+            echo "  ERROR: Node $i timeout (${n:-0}/$expected_calls calls)"
+            grep 'Method call\|Error' "$log_file" 2>/dev/null | tail -10
+        fi
+        return 1
+    fi
+    return 0
+}
+
+# Start node 0 first (bootstrap node)
+log "  Starting bootstrap node 0..."
+start_node 0
+INSTANCE_PIDS[0]=$LAST_NODE_PID
+echo "  Node 0 PID: ${INSTANCE_PIDS[0]}"
+
+log "  Waiting for node 0 to initialize..."
+wait_for_node_init 0 "${INSTANCE_PIDS[0]}" || die "Bootstrap node 0 failed to initialize"
+log "  Node 0 ready"
+
+# Start remaining CORE nodes (1 to NUM_NODES-1) with stagger
+if [ "$NUM_NODES" -gt 1 ]; then
+    log "  Starting core nodes 1-$((NUM_NODES-1))..."
+    for i in $(seq 1 $((NUM_NODES - 1))); do
+        start_node "$i"
+        INSTANCE_PIDS[$i]=$LAST_NODE_PID
+        echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
+        sleep 2  # Stagger to avoid resource contention
+    done
+
+    # Wait for all core nodes to initialize
+    log "  Waiting for core nodes 1-$((NUM_NODES-1)) to initialize..."
+    INIT_FAILED=0
+    for i in $(seq 1 $((NUM_NODES - 1))); do
+        if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
+            INIT_FAILED=1
+        else
+            log "  Node $i ready"
+        fi
+    done
+    [ "$INIT_FAILED" -eq 1 ] && die "One or more core nodes failed to initialize"
+fi
+
+# Start EDGE nodes (NUM_NODES to TOTAL_NODES-1) AFTER core nodes are ready
+if [ "$NUM_CHAT_CLIENTS" -gt 0 ]; then
+    log "  Starting edge nodes $NUM_NODES-$((TOTAL_NODES-1))..."
+    for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
+        start_node "$i"
+        INSTANCE_PIDS[$i]=$LAST_NODE_PID
+        echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
+        sleep 2
+    done
+
+    # Wait for edge nodes to initialize
+    log "  Waiting for edge nodes to initialize..."
+    INIT_FAILED=0
+    for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
+        if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
+            INIT_FAILED=1
+        else
+            log "  Node $i ready"
+        fi
+    done
+    [ "$INIT_FAILED" -eq 1 ] && die "One or more edge nodes failed to initialize"
+fi
 
 # Wait for peer discovery across all nodes
-echo "  Waiting for peer discovery (15s)..."
+log "  Waiting for peer discovery (15s)..."
 sleep 15
 
-# ---------- Phase 7: Ready ----------
+# ---------- Phase 7: Start chat2mix receiver ----------
+echo "[7/8] Starting chat2mix receiver..."
+
+CHAT2MIX="$DELIVERY_DIR/build/chat2mix"
+if [ ! -f "$CHAT2MIX" ]; then
+    echo "  Building chat2mix..."
+    (cd "$DELIVERY_DIR" && make chat2mix 2>&1 | tail -3) || die "chat2mix build failed"
+fi
+
+RECEIVER_LOG="$WORK_DIR/receiver.log"
+RECEIVER_PORT=$((BASE_TCP_PORT + 200))
+
+# Build mixnode flags for chat2mix
+MIXNODE_FLAGS=""
+for j in $(seq 0 $((NUM_NODES - 1))); do
+    J_PORT=$((BASE_TCP_PORT + j))
+    MIXNODE_FLAGS="$MIXNODE_FLAGS --mixnode=/ip4/127.0.0.1/tcp/$J_PORT/p2p/${PEER_IDS[$j]}:${MIX_PUBKEYS[$j]}"
+done
+
+"$CHAT2MIX" \
+    --ports-shift=$((200 + NUM_NODES)) \
+    --cluster-id=42 \
+    --num-shards-in-network=8 \
+    --shard=0 \
+    --servicenode="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}" \
+    --log-level=TRACE \
+    --nodekey="${NODEKEYS[$((NUM_NODES + NUM_CHAT_CLIENTS))]}" \
+    --kad-bootstrap-node="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}" \
+    $MIXNODE_FLAGS \
+    --fleet="none" \
+    < <(echo "receiver"; while true; do sleep 86400; done) >"$RECEIVER_LOG" 2>&1 &
+RECEIVER_PID=$!
+INSTANCE_PIDS+=($RECEIVER_PID)
+echo "  Receiver PID: $RECEIVER_PID (port $RECEIVER_PORT)"
+echo "  Waiting for filter subscription (20s)..."
+sleep 20
+
+# ---------- Phase 8: Ready ----------
 echo ""
-echo "[7/7] Simulation running!"
+echo "[8/8] Simulation running!"
 echo ""
 echo "  Sequencer:  PID $SEQUENCER_PID (port 3040)"
 echo "  Config:     $CONFIG_ACCOUNT"
 echo "  Logs:       $WORK_DIR/node*.log"
+echo "  Receiver:   $RECEIVER_LOG"
 echo ""
-for i in $(seq 0 $((NUM_NODES - 1))); do
+for i in $(seq 0 $((TOTAL_NODES - 1))); do
     TCP_PORT=$((BASE_TCP_PORT + i))
-    echo "  Node $i: PID ${INSTANCE_PIDS[$i]}, port $TCP_PORT, leaf ${LEAF_INDICES[$i]}"
+    MODE="core"
+    [ "$i" -ge "$NUM_NODES" ] && MODE="edge"
+    echo "  Node $i ($MODE): PID ${INSTANCE_PIDS[$i]}, port $TCP_PORT, leaf ${LEAF_INDICES[$i]}"
 done
 echo ""
 echo "  To inspect logs:"
-for i in $(seq 0 $((NUM_NODES - 1))); do
+for i in $(seq 0 $((TOTAL_NODES - 1))); do
     echo "    grep 'Method call' $WORK_DIR/node${i}.log"
 done
-echo ""
-echo "  Now start chat clients in separate terminals:"
-echo "    cd $(pwd)"
-echo "    bash run_chat_mix.sh"
-echo "    bash run_chat_mix1.sh"
 echo ""
 echo "  Press Ctrl+C to stop everything."
 

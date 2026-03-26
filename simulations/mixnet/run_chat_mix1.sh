@@ -16,8 +16,8 @@ NODE0_ADDR="/ip4/127.0.0.1/tcp/60001/p2p/16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRH
 
 "$CHAT2MIX" \
     --ports-shift=201 \
-    --cluster-id=2 \
-    --num-shards-in-network=1 \
+    --cluster-id=42 \
+    --num-shards-in-network=8 \
     --shard=0 \
     --servicenode="$NODE0_ADDR" \
     --log-level=TRACE \
@@ -28,4 +28,5 @@ NODE0_ADDR="/ip4/127.0.0.1/tcp/60001/p2p/16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRH
     --mixnode="/ip4/127.0.0.1/tcp/60003/p2p/16Uiu2HAmTEDHwAziWUSz6ZE23h5vxG2o4Nn7GazhMor4bVuMXTrA:275cd6889e1f29ca48e5b9edb800d1a94f49f13d393a0ecf1a07af753506de6c" \
     --mixnode="/ip4/127.0.0.1/tcp/60004/p2p/16Uiu2HAmPwRKZajXtfb1Qsv45VVfRZgK3ENdfmnqzSrVm3BczF6f:e0ed594a8d506681be075e8e23723478388fb182477f7a469309a25e7076fc18" \
     --mixnode="/ip4/127.0.0.1/tcp/60005/p2p/16Uiu2HAmRhxmCHBYdXt1RibXrjAUNJbduAhzaTHwFCZT4qWnqZAu:8fd7a1a7c19b403d231452a9b1ea40eb1cc76f455d918ef8980e7685f9eeeb1f" \
-    --fleet="none"
+    --fleet="none" \
+    --enable-spam-protection

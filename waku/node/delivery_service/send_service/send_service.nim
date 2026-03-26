@@ -10,10 +10,12 @@ import
     waku_core,
     node/waku_node,
     node/peer_manager,
+    node/kernel_api/lightpush,
     waku_store/client,
     waku_store/common,
     waku_relay/protocol,
     waku_rln_relay/rln_relay,
+    waku_lightpush/common as lightpush_common,
     waku_lightpush/client,
     waku_lightpush/callbacks,
     events/message_events,
@@ -66,6 +68,8 @@ proc setupSendProcessorChain(
     relay: WakuRelay,
     rlnRelay: WakuRLNRelay,
     brokerCtx: BrokerContext,
+    lightpushPublishProc: LightpushPublishProc = nil,
+    useMix: bool = false,
 ): Result[BaseSendProcessor, string] =
   let isRelayAvail = not relay.isNil()
   let isLightPushAvail = not lightpushClient.isNil()
@@ -85,7 +89,8 @@ proc setupSendProcessorChain(
 
     processors.add(RelaySendProcessor.new(isLightPushAvail, publishProc, brokerCtx))
   if isLightPushAvail:
-    processors.add(LightpushSendProcessor.new(peerManager, lightpushClient, brokerCtx))
+    processors.add(LightpushSendProcessor.new(
+      peerManager, lightpushClient, brokerCtx, lightpushPublishProc, useMix))
 
   var currentProcessor: BaseSendProcessor = processors[0]
   for i in 1 ..< processors.len:
@@ -108,8 +113,21 @@ proc new*(
 
   let checkStoreForMessages = preferP2PReliability and not w.wakuStoreClient.isNil()
 
+  let useMix = not w.wakuMix.isNil()
+  var lpPublishProc: LightpushPublishProc = nil
+  if useMix:
+    let node = w
+    lpPublishProc = proc(
+        pubsubTopic: Option[PubsubTopic],
+        message: WakuMessage,
+        peerOpt: Option[RemotePeerInfo],
+        mixify: bool,
+    ): Future[WakuLightPushResult] {.async, gcsafe.} =
+      return await node.lightpushPublish(pubsubTopic, message, peerOpt, mixify)
+
   let sendProcessorChain = setupSendProcessorChain(
-    w.peerManager, w.wakuLightPushClient, w.wakuRelay, w.wakuRlnRelay, w.brokerCtx
+    w.peerManager, w.wakuLightPushClient, w.wakuRelay, w.wakuRlnRelay, w.brokerCtx,
+    lpPublishProc, useMix,
   ).valueOr:
     return err("failed to setup SendProcessorChain: " & $error)
 

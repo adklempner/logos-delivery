@@ -208,21 +208,19 @@ proc publish(c: Chat, line: string) {.async.} =
 
   try:
     if not c.node.wakuLightpushClient.isNil():
-      # Attempt lightpush with mix
-
-      (
-        waitFor c.node.lightpushPublish(
-          some(c.conf.getPubsubTopic(c.node, c.contentTopic)),
-          message,
-          none(RemotePeerInfo),
-          true,
-        )
-      ).isOkOr:
-        error "failed to publish lightpush message", error = error
+      let res = waitFor c.node.lightpushPublish(
+        some(c.conf.getPubsubTopic(c.node, c.contentTopic)),
+        message,
+        none(RemotePeerInfo),
+        true,
+      )
+      if res.isErr():
+        error "failed to publish lightpush message", error = res.error
+        echo "Publish error: " & res.error.desc.get("unknown error")
     else:
       error "failed to publish message as lightpush client is not initialized"
   except CatchableError:
-    error "caught error publishing message: ", error = getCurrentExceptionMsg()
+    echo "Caught error publishing: " & getCurrentExceptionMsg()
 
 # TODO This should read or be subscribe handler subscribe
 proc readAndPrint(c: Chat) {.async.} =

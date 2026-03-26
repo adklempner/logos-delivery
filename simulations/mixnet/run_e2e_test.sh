@@ -90,10 +90,14 @@ mkfifo "$PIPE1" "$PIPE2"
 exec 3<>"$PIPE1"
 exec 4<>"$PIPE2"
 
-# Start chat clients reading from the FIFOs.
-bash "$SCRIPT_DIR/run_chat_mix.sh" < "$PIPE1" > "$CHAT1_LOG" 2>&1 &
+# Extract WORK_DIR from simulation log (where keystores are)
+SIM_WORK_DIR=$(grep 'Logs:' "$SIM_LOG" 2>/dev/null | head -1 | sed 's/.*Logs: *//; s|/node\*\.log||')
+echo "  Keystores dir: $SIM_WORK_DIR"
+
+# Start chat clients from WORK_DIR so they find rln_keystore_{peerId}.json
+(cd "$SIM_WORK_DIR" && bash "$SCRIPT_DIR/run_chat_mix.sh") < "$PIPE1" > "$CHAT1_LOG" 2>&1 &
 CHAT1_PID=$!
-bash "$SCRIPT_DIR/run_chat_mix1.sh" < "$PIPE2" > "$CHAT2_LOG" 2>&1 &
+(cd "$SIM_WORK_DIR" && bash "$SCRIPT_DIR/run_chat_mix1.sh") < "$PIPE2" > "$CHAT2_LOG" 2>&1 &
 CHAT2_PID=$!
 
 echo "TestAlice" >&3

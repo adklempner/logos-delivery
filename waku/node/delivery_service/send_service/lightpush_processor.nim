@@ -9,21 +9,37 @@ import
 
 import ./[delivery_task, send_processor]
 
+# Forward declaration to avoid circular import with waku_node
+type WakuNodeRef* = ref object
+  # Opaque reference — actual type resolved at link time via node parameter
+
+type LightpushPublishProc* = proc(
+    pubsubTopic: Option[PubsubTopic],
+    message: WakuMessage,
+    peerOpt: Option[RemotePeerInfo],
+    mixify: bool,
+): Future[WakuLightPushResult] {.async, gcsafe.}
+
 logScope:
   topics = "send service lightpush processor"
 
 type LightpushSendProcessor* = ref object of BaseSendProcessor
   peerManager: PeerManager
   lightpushClient: WakuLightPushClient
+  publishProc: LightpushPublishProc
+  useMix: bool
 
 proc new*(
     T: typedesc[LightpushSendProcessor],
     peerManager: PeerManager,
     lightpushClient: WakuLightPushClient,
     brokerCtx: BrokerContext,
+    publishProc: LightpushPublishProc = nil,
+    useMix: bool = false,
 ): T =
   return
-    T(peerManager: peerManager, lightpushClient: lightpushClient, brokerCtx: brokerCtx)
+    T(peerManager: peerManager, lightpushClient: lightpushClient,
+      brokerCtx: brokerCtx, publishProc: publishProc, useMix: useMix)
 
 proc isLightpushPeerAvailable(
     self: LightpushSendProcessor, pubsubTopic: PubsubTopic
@@ -44,27 +60,32 @@ method sendImpl*(
     msgHash = task.msgHash.to0xHex(),
     tryCount = task.tryCount
 
-  let peer = self.peerManager.selectPeer(WakuLightPushCodec, some(task.pubsubTopic)).valueOr:
-    debug "No peer available for Lightpush, request pushed back for next round",
-      requestId = task.requestId
-    task.state = DeliveryState.NextRoundRetry
-    return
-
-  let numLightpushServers = (
-    await self.lightpushClient.publish(some(task.pubsubTopic), task.msg, peer)
-  ).valueOr:
-    error "LightpushSendProcessor.sendImpl failed", error = error.desc.get($error.code)
-    case error.code
-    of LightPushErrorCode.NO_PEERS_TO_RELAY, LightPushErrorCode.TOO_MANY_REQUESTS,
-        LightPushErrorCode.OUT_OF_RLN_PROOF, LightPushErrorCode.SERVICE_NOT_AVAILABLE,
-        LightPushErrorCode.INTERNAL_SERVER_ERROR:
-      task.state = DeliveryState.NextRoundRetry
+  let numLightpushServers =
+    if not self.publishProc.isNil() and self.useMix:
+      # Use the node-level lightpushPublish with mixify support
+      info "Sending via Lightpush with mix", requestId = task.requestId
+      (await self.publishProc(some(task.pubsubTopic), task.msg, none(RemotePeerInfo), true)).valueOr:
+        error "LightpushSendProcessor.sendImpl (mix) failed", error = error.desc.get($error.code)
+        task.state = DeliveryState.NextRoundRetry
+        return
     else:
-      # the message is malformed, send error
-      task.state = DeliveryState.FailedToDeliver
-      task.errorDesc = error.desc.get($error.code)
-      task.deliveryTime = Moment.now()
-    return
+      let peer = self.peerManager.selectPeer(WakuLightPushCodec, some(task.pubsubTopic)).valueOr:
+        debug "No peer available for Lightpush, request pushed back for next round",
+          requestId = task.requestId
+        task.state = DeliveryState.NextRoundRetry
+        return
+      (await self.lightpushClient.publish(some(task.pubsubTopic), task.msg, peer)).valueOr:
+        error "LightpushSendProcessor.sendImpl failed", error = error.desc.get($error.code)
+        case error.code
+        of LightPushErrorCode.NO_PEERS_TO_RELAY, LightPushErrorCode.TOO_MANY_REQUESTS,
+            LightPushErrorCode.OUT_OF_RLN_PROOF, LightPushErrorCode.SERVICE_NOT_AVAILABLE,
+            LightPushErrorCode.INTERNAL_SERVER_ERROR:
+          task.state = DeliveryState.NextRoundRetry
+        else:
+          task.state = DeliveryState.FailedToDeliver
+          task.errorDesc = error.desc.get($error.code)
+          task.deliveryTime = Moment.now()
+        return
 
   if numLightpushServers > 0:
     info "Message propagated via Lightpush",

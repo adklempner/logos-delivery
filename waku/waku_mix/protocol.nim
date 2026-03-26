@@ -11,7 +11,7 @@ import
   libp2p/protocols/mix/mix_metrics,
   libp2p/protocols/mix/delay_strategy,
   libp2p/protocols/mix/spam_protection,
-  libp2p/[multiaddress, multicodec, peerid, peerinfo],
+  libp2p/[multiaddress, peerid, peerinfo],
   eth/common/keys
 
 import
@@ -77,7 +77,7 @@ proc processBootNodes(
       RemotePeerInfo.init(peerId, @[networkAddr], mixPubKey = some(node.pubKey))
     )
   mix_pool_size.set(count)
-  debug "using mix bootstrap nodes ", count = count
+  info "using mix bootstrap nodes ", count = count
 
 proc new*(
     T: typedesc[WakuMix],
@@ -91,7 +91,7 @@ proc new*(
     enableSpamProtection: bool = false,
 ): WakuMixResult[T] =
   let mixPubKey = public(mixPrivKey)
-  trace "mixPubKey", mixPubKey = mixPubKey
+  info "mixPubKey", mixPubKey = mixPubKey
   let nodeMultiAddr = MultiAddress.init(nodeAddr).valueOr:
     return err("failed to parse mix node address: " & $nodeAddr & ", error: " & error)
   let localMixNodeInfo = initMixNodeInfo(
@@ -132,7 +132,7 @@ proc new*(
     peermgr.switch,
     spamProtection = spamProtectionOpt,
     delayStrategy =
-      ExponentialDelayStrategy.new(meanDelayMs = 100, rng = crypto.newRng()),
+      ExponentialDelayStrategy.new(meanDelayMs = 50, rng = crypto.newRng()),
   )
 
   processBootNodes(bootnodes, peermgr, m)
@@ -210,20 +210,9 @@ method start*(mix: WakuMix) {.async.} =
         else:
           debug "Registered spam protection credentials", index = registerRes.get()
 
-  if mix.nodePool.len > 0:
-    info "warming up mix connections", poolSize = mix.nodePool.len
-    var connected = 0
-    for peerId in mix.nodePool.peerIds():
-      let pubInfo = mix.nodePool.get(peerId)
-      if pubInfo.isSome:
-        let (pid, multiAddr, _, _) = pubInfo.get().get()
-        try:
-          discard await mix.switch.dial(pid, @[multiAddr], @[MixProtocolID])
-          connected.inc()
-          debug "mix connection established", peerId = pid
-        except CatchableError as e:
-          warn "failed to dial mix peer at startup", peerId = pid, error = e.msg
-    info "mix warmup complete", connections = connected, total = mix.nodePool.len
+  # Note: no mix warmup. Connections are established on-demand by getConn
+  # when sendPacket is called. Pre-warming creates stale cached connections
+  # that prevent fresh connections from being established at send time.
 
 method stop*(mix: WakuMix) {.async.} =
   if not mix.mixRlnSpamProtection.isNil():
