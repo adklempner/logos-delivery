@@ -656,6 +656,45 @@ for i in $(seq 0 $((TOTAL_NODES - 1))); do
     echo "    grep 'Method call' $WORK_DIR/node${i}.log"
 done
 echo ""
+echo "  Waiting for message delivery (sender delay + propagation)..."
+echo ""
+
+SENDER_LOG="$WORK_DIR/node${NUM_NODES}.log"
+# Wait up to 90s for sender to fire
+for t in $(seq 1 90); do
+    SENT=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
+    [ "$SENT" -ge 3 ] && break
+    sleep 1
+done
+
+# Give mix forwarding + relay + filter time to complete
+sleep 5
+
+echo "  === Message Delivery Report ==="
+SENDS=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
+echo "  Sender:   $SENDS messages entered mix path"
+
+TOTAL_INT=0; TOTAL_EXIT=0; TOTAL_PUB=0
+i=0; while [ "$i" -lt "$NUM_NODES" ]; do
+    INT=$(rg -c 'Intermediate node processing' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+    EXIT=$(rg -c 'Exit node - Received mix' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+    PUB=$(rg -c 'start publish Waku message' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+    TOTAL_INT=$((TOTAL_INT + INT)); TOTAL_EXIT=$((TOTAL_EXIT + EXIT)); TOTAL_PUB=$((TOTAL_PUB + PUB))
+    i=$((i + 1))
+done
+echo "  Mix hops: $TOTAL_INT intermediate, $TOTAL_EXIT exit"
+echo "  Relay:    $TOTAL_PUB gossipsub publishes"
+
+RECV=$(rg -c '^>> <' "$RECEIVER_LOG" 2>/dev/null || echo 0)
+echo "  Receiver: $RECV messages received via filter"
+
+echo ""
+if [ "$RECV" -ge 1 ]; then
+    echo "  E2E delivery confirmed!"
+else
+    echo "  WARNING: Messages not received. Check logs for details."
+fi
+echo ""
 echo "  Press Ctrl+C to stop everything."
 
 wait
