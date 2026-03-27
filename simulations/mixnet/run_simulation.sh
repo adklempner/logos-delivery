@@ -482,7 +482,7 @@ write_node_config() {
     done
 
     if [ "$i" -ge "$NUM_NODES" ]; then
-        # Sender node: Edge mode with explicit lightpush service peer
+        # Sender node: Edge mode with mixnodes for pool + lightpushnode for service peer
         local service_node="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}"
         cat > "$config_file" <<EOF
 {
@@ -500,7 +500,7 @@ write_node_config() {
   "mix": true,
   "enableSpamProtection": true,
   "colocationLimit": 0,
-  "maxConnsPerPeer": 5,
+  "maxConnsPerPeer": 10,
   "enableWarmup": false,
   "rendezvous": false,
   "lightpushnode": "$service_node",
@@ -508,10 +508,9 @@ write_node_config() {
 }
 EOF
     else
-        # Core mix node: relay + lightpush + filter services, no PX/rendezvous
+        # Core mix node: explicit config matching master simulation
         cat > "$config_file" <<EOF
 {
-  "mode": "Core",
   "clusterId": 42,
   "numShardsInNetwork": 8,
   "entryNodes": $entry_nodes,
@@ -523,12 +522,15 @@ EOF
   "mixkey": "${MIXKEYS[$i]}",
   "mixnodes": [$mix_nodes_json],
   "mix": true,
+  "relay": true,
+  "lightpush": true,
+  "filter": true,
+  "peerExchange": false,
+  "rendezvous": false,
   "enableSpamProtection": true,
   "colocationLimit": 0,
   "maxConnsPerPeer": 5,
   "enableWarmup": false,
-  "peerExchangeService": false,
-  "rendezvous": false,
   "logLevel": "TRACE"
 }
 EOF
@@ -638,50 +640,21 @@ if [ "$NUM_NODES" -gt 1 ]; then
     [ "$INIT_FAILED" -eq 1 ] && die "One or more core nodes failed to initialize"
 fi
 
-# Start EDGE nodes with retry on connection failure
-MAX_EDGE_RETRIES=3
+# Start EDGE nodes
 if [ "$NUM_CHAT_CLIENTS" -gt 0 ]; then
+    log "  Starting edge nodes $NUM_NODES-$((TOTAL_NODES-1))..."
     for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
-        RETRY=0
-        while true; do
-            RETRY=$((RETRY + 1))
-            [ "$RETRY" -gt 1 ] && log "  Edge node $i: retry $RETRY/$MAX_EDGE_RETRIES"
-            [ "$RETRY" -eq 1 ] && log "  Starting edge node $i..."
+        start_node "$i"
+        INSTANCE_PIDS[$i]=$LAST_NODE_PID
+        echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
+    done
 
-            start_node "$i"
-            INSTANCE_PIDS[$i]=$LAST_NODE_PID
-            echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
-
-            log "  Waiting for edge node $i..."
-            if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
-                die "Edge node $i failed to initialize"
-            fi
-            log "  Node $i initialized, checking connectivity..."
-
-            # Wait for peer connection (up to 10s, check every 2s)
-            LP_COUNT=0
-            for _lp in $(seq 1 5); do
-                sleep 2
-                LP_COUNT=$(rg -c 'lightpushCount=[1-9]' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-                [ "$LP_COUNT" -gt 0 ] && break
-            done
-            if [ "$LP_COUNT" -gt 0 ]; then
-                log "  Node $i connected (lightpush peers found)"
-                break
-            fi
-
-            if [ "$RETRY" -ge "$MAX_EDGE_RETRIES" ]; then
-                echo "  WARNING: Edge node $i has no lightpush peers after $MAX_EDGE_RETRIES attempts"
-                echo "  Continuing anyway — messages may fail"
-                break
-            fi
-
-            # Kill and wait for connections to clean up before retry
-            echo "  Edge node $i: no lightpush peers, restarting..."
-            kill "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
-            wait "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
-            sleep 10
-        done
+    log "  Waiting for edge nodes to initialize..."
+    for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
+        if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
+            die "Edge node $i failed to initialize"
+        fi
+        log "  Node $i ready"
     done
 fi
 
