@@ -482,15 +482,14 @@ write_node_config() {
     done
 
     if [ "$i" -ge "$NUM_NODES" ]; then
-        # Sender node: configured like chat2mix on master
-        # Uses Edge mode but core nodes have PX service disabled,
-        # so the PX discovery loop gets no peers and won't cause connection storms
+        # Sender node: Edge mode with explicit lightpush service peer
+        local service_node="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}"
         cat > "$config_file" <<EOF
 {
   "mode": "Edge",
   "clusterId": 42,
   "numShardsInNetwork": 8,
-  "entryNodes": $entry_nodes,
+  "entryNodes": ["$service_node"],
   "maxMessageSize": "150 KiB",
   "listenAddress": "127.0.0.1",
   "tcpPort": $tcp_port,
@@ -504,6 +503,7 @@ write_node_config() {
   "maxConnsPerPeer": 5,
   "enableWarmup": false,
   "rendezvous": false,
+  "lightpushnode": "$service_node",
   "logLevel": "TRACE"
 }
 EOF
