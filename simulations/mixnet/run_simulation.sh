@@ -11,6 +11,14 @@ RLN_PROJECT_DIR="$(cd "$DELIVERY_DIR/.." && pwd)"
 export RISC0_DEV_MODE=1
 export TMPDIR=/tmp
 
+# --- Flags ---
+FRESH=0
+for arg in "$@"; do
+    case "$arg" in
+        --fresh) FRESH=1;;
+    esac
+done
+
 # =============================================================================
 # Utility Functions
 # =============================================================================
@@ -114,12 +122,22 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "Unsupported platform"; exit 1;;
 esac
 
-# --- Cleanup ---
+# --- Persistent state directory ---
+STATE_DIR="$SCRIPT_DIR/.sim_state"
+if [ "$FRESH" -eq 1 ]; then
+    echo "  --fresh: cleaning state..."
+    rm -rf "$STATE_DIR"
+fi
+mkdir -p "$STATE_DIR"
+
+# --- Cleanup (only kills logoscore/chat2mix, NOT sequencer) ---
 SEQUENCER_PID=""
+OWN_SEQUENCER=0  # track if we started the sequencer
 INSTANCE_PIDS=()
 MODULES_DIRS=()
-WORK_DIR=""
+WORK_DIR="$STATE_DIR"
 cleanup() {
+    set +u  # bash 3 compat: empty arrays with -u
     echo ""
     echo "=== Shutting down ==="
     for pid in "${INSTANCE_PIDS[@]+"${INSTANCE_PIDS[@]}"}"; do
@@ -131,23 +149,22 @@ cleanup() {
         fi
     done
     pkill -f 'logos_host' 2>/dev/null || true
-    if [ -n "$SEQUENCER_PID" ]; then
+    if [ "$OWN_SEQUENCER" -eq 1 ] && [ -n "$SEQUENCER_PID" ]; then
         kill "$SEQUENCER_PID" 2>/dev/null || true
         wait "$SEQUENCER_PID" 2>/dev/null || true
     fi
     for mdir in "${MODULES_DIRS[@]}"; do
         [ -n "$mdir" ] && rm -rf "$mdir"
     done
-    if [ -n "$WORK_DIR" ]; then
-        echo "  Logs:       $WORK_DIR"
-    fi
+    echo "  Logs: $WORK_DIR"
     echo "Done."
 }
 trap cleanup EXIT
 
-echo "=== Mix Simulation (5 LogosCore Instances) ==="
+echo "=== Mix Simulation ==="
 echo "  RLN project: $RLN_PROJECT_DIR"
 echo "  Delivery:    $DELIVERY_DIR"
+echo "  State:       $STATE_DIR"
 echo ""
 
 pkill -f 'logos_host' 2>/dev/null || true
@@ -155,133 +172,149 @@ sleep 1
 rm -f /tmp/logos_* 2>/dev/null || true
 
 # ---------- Phase 1: Sequencer ----------
-echo "[1/7] Starting sequencer..."
+echo "[1/7] Sequencer..."
 
 (cd "$RLN_PROJECT_DIR" && git submodule update --init lssa)
 
-if nc -z 127.0.0.1 3040 2>/dev/null; then
-    OLD_PID=$(lsof -ti tcp:3040 2>/dev/null || true)
-    if [ -n "$OLD_PID" ]; then
-        echo "  Port 3040 in use by PID $OLD_PID. Killing..."
-        kill "$OLD_PID" 2>/dev/null || true
+if nc -z 127.0.0.1 3040 2>/dev/null && [ "$FRESH" -eq 0 ]; then
+    SEQUENCER_PID=$(lsof -ti tcp:3040 2>/dev/null || true)
+    echo "  Sequencer already running (PID $SEQUENCER_PID, port 3040)"
+else
+    if nc -z 127.0.0.1 3040 2>/dev/null; then
+        OLD_PID=$(lsof -ti tcp:3040 2>/dev/null || true)
+        [ -n "$OLD_PID" ] && kill "$OLD_PID" 2>/dev/null || true
         sleep 1
     fi
-fi
 
-rm -rf "$RLN_PROJECT_DIR/lssa/rocksdb"
+    rm -rf "$RLN_PROJECT_DIR/lssa/rocksdb"
 
-log "  Building sequencer (first run may take several minutes)..."
-(cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3) || \
-    die "sequencer build failed"
+    log "  Building sequencer (first run may take several minutes)..."
+    (cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3) || \
+        die "sequencer build failed"
 
-SEQUENCER_BIN="$RLN_PROJECT_DIR/lssa/target/debug/sequencer_runner"
-(cd "$RLN_PROJECT_DIR/lssa" && env RUST_LOG=info "$SEQUENCER_BIN" sequencer_runner/configs/debug) >/dev/null 2>&1 &
-SEQUENCER_PID=$!
-echo "  PID: $SEQUENCER_PID"
+    SEQUENCER_BIN="$RLN_PROJECT_DIR/lssa/target/debug/sequencer_runner"
+    (cd "$RLN_PROJECT_DIR/lssa" && env RUST_LOG=info "$SEQUENCER_BIN" sequencer_runner/configs/debug) >/dev/null 2>&1 &
+    SEQUENCER_PID=$!
+    OWN_SEQUENCER=1
+    echo "  PID: $SEQUENCER_PID"
 
-log "  Waiting for port 3040..."
-if ! wait_for_port 3040 300 "$SEQUENCER_PID"; then
-    if ! kill -0 "$SEQUENCER_PID" 2>/dev/null; then
-        die "Sequencer exited unexpectedly"
-    else
-        die "Sequencer did not start within 300s"
+    log "  Waiting for port 3040..."
+    if ! wait_for_port 3040 300 "$SEQUENCER_PID"; then
+        die "Sequencer failed to start"
     fi
+    log "  Sequencer ready."
 fi
-log "  Sequencer ready."
 
 # ---------- Phase 2: Deploy programs ----------
-echo "[2/7] Deploying programs..."
+echo "[2/7] Programs..."
 
-# Build guest binaries if missing (required by run_setup and register_member)
 LEZ_RLN_DIR="$RLN_PROJECT_DIR/lez-rln"
 GUEST_BIN="$LEZ_RLN_DIR/methods/guest/target/riscv32im-risc0-zkvm-elf/docker/rln_registration.bin"
-if [ ! -f "$GUEST_BIN" ]; then
-    if ! command -v cargo-risczero &>/dev/null; then
-        die "zkVM guest binaries not found and cargo-risczero not installed.\n  Install with: cargo install cargo-risczero && cargo risczero install\n  Requires Docker running for cross-compilation."
-    fi
-    log "  Building zkVM guest programs (first run may take several minutes)..."
-    (cd "$LEZ_RLN_DIR" && cargo risczero build --manifest-path methods/guest/Cargo.toml 2>&1 | tail -10) || \
-        die "guest program build failed. Is Docker running?"
-fi
 
 export NSSA_WALLET_HOME_DIR="$RLN_PROJECT_DIR/dev"
 export WALLET_CONFIG="$NSSA_WALLET_HOME_DIR/wallet_config.json"
 export WALLET_STORAGE="$NSSA_WALLET_HOME_DIR/storage.json"
-rm -f "$WALLET_CONFIG" "$WALLET_STORAGE"
 
-SETUP_OUTPUT=$(cd "$LEZ_RLN_DIR" && cargo run --bin run_setup 2>&1) || {
-    echo "  FATAL: run_setup failed:"
-    echo "$SETUP_OUTPUT"
-    exit 1
-}
-echo "$SETUP_OUTPUT" | tail -5
-TREE_MAIN_ACCOUNT=$(echo "$SETUP_OUTPUT" | grep "Tree main account:" | awk '{print $NF}')
-if [ -z "$TREE_MAIN_ACCOUNT" ]; then
-    echo "  FATAL: Could not parse tree main account from run_setup output"
-    exit 1
+TREE_MAIN_FILE="$STATE_DIR/tree_main_account"
+
+if [ -f "$TREE_MAIN_FILE" ] && [ -f "$WALLET_CONFIG" ] && [ "$FRESH" -eq 0 ]; then
+    TREE_MAIN_ACCOUNT=$(cat "$TREE_MAIN_FILE")
+    echo "  Programs already deployed (tree: $TREE_MAIN_ACCOUNT)"
+else
+    if [ ! -f "$GUEST_BIN" ]; then
+        if ! command -v cargo-risczero &>/dev/null; then
+            die "zkVM guest binaries not found and cargo-risczero not installed.\n  Install with: cargo install cargo-risczero && cargo risczero install\n  Requires Docker running for cross-compilation."
+        fi
+        log "  Building zkVM guest programs (first run may take several minutes)..."
+        (cd "$LEZ_RLN_DIR" && cargo risczero build --manifest-path methods/guest/Cargo.toml 2>&1 | tail -10) || \
+            die "guest program build failed. Is Docker running?"
+    fi
+
+    rm -f "$WALLET_CONFIG" "$WALLET_STORAGE"
+
+    SETUP_OUTPUT=$(cd "$LEZ_RLN_DIR" && cargo run --bin run_setup 2>&1) || {
+        echo "  FATAL: run_setup failed:"
+        echo "$SETUP_OUTPUT"
+        exit 1
+    }
+    echo "$SETUP_OUTPUT" | tail -5
+    TREE_MAIN_ACCOUNT=$(echo "$SETUP_OUTPUT" | grep "Tree main account:" | awk '{print $NF}')
+    [ -z "$TREE_MAIN_ACCOUNT" ] && die "Could not parse tree main account"
+    echo "$TREE_MAIN_ACCOUNT" > "$TREE_MAIN_FILE"
+    echo "  Programs deployed. Tree: $TREE_MAIN_ACCOUNT"
 fi
-echo "  Programs deployed."
-echo "  Tree main account: $TREE_MAIN_ACCOUNT"
 
-# ---------- Phase 3: Register 5 members & generate keystores ----------
+# ---------- Phase 3: Register members & generate keystores ----------
 TOTAL_MEMBERS=$((NUM_NODES + NUM_CHAT_CLIENTS))
-echo "[3/7] Registering $TOTAL_MEMBERS members and generating keystores..."
+echo "[3/7] Members..."
 
-WORK_DIR=$(mktemp -d)
-
-REGISTER_BIN="$LEZ_RLN_DIR/target/release/register_member"
-(cd "$LEZ_RLN_DIR" && cargo build --release --bin register_member 2>&1 | tail -3)
-[ -f "$REGISTER_BIN" ] || die "register_member not found at $REGISTER_BIN"
-
-MANIFEST_FILE="$WORK_DIR/manifest.json"
+MANIFEST_FILE="$STATE_DIR/manifest.json"
 LEAF_INDICES=()
 IDENTITY_SECRETS=()
 CONFIG_ACCOUNT=""
 
-# Register all members in a single batch call
-REG_OUTPUT="$WORK_DIR/reg_output.txt"
-log "  Registering $TOTAL_MEMBERS members..."
-(cd "$LEZ_RLN_DIR" && "$REGISTER_BIN" --count "$TOTAL_MEMBERS" > "$REG_OUTPUT" 2>&1) || {
-    cat "$REG_OUTPUT" 2>/dev/null || true
-    die "register_member failed"
-}
-
-# Parse batch output into per-member arrays
-REG_OUTPUTS=()
-# Split output into per-member chunks (3 lines each: CONFIG_ACCOUNT, LEAF_INDEX, IDENTITY_SECRET_HASH)
-MEMBER_IDX=0
-while IFS= read -r line; do
-    case "$line" in
-        CONFIG_ACCOUNT=*)
-            REG_OUTPUTS[$MEMBER_IDX]="$WORK_DIR/reg_output_$MEMBER_IDX.txt"
-            echo "$line" > "${REG_OUTPUTS[$MEMBER_IDX]}"
-            ;;
-        LEAF_INDEX=*|IDENTITY_SECRET_HASH=*)
-            echo "$line" >> "${REG_OUTPUTS[$MEMBER_IDX]}"
-            if [[ "$line" == IDENTITY_SECRET_HASH=* ]]; then
-                MEMBER_IDX=$((MEMBER_IDX + 1))
-            fi
-            ;;
-    esac
-done < "$REG_OUTPUT"
-
-# Parse outputs and build manifest (sequential to maintain order)
-echo "[" > "$MANIFEST_FILE"
-for i in $(seq 0 $((TOTAL_MEMBERS - 1))); do
-    OUTPUT=$(cat "${REG_OUTPUTS[$i]}")
-    CONFIG_ACCOUNT=$(echo "$OUTPUT" | grep "^CONFIG_ACCOUNT=" | cut -d= -f2)
-    LEAF_INDEX=$(echo "$OUTPUT" | grep "^LEAF_INDEX=" | cut -d= -f2)
-    IDENTITY_SECRET=$(echo "$OUTPUT" | grep "^IDENTITY_SECRET_HASH=" | cut -d= -f2)
-
-    if [ -z "$CONFIG_ACCOUNT" ] || [ -z "$LEAF_INDEX" ] || [ -z "$IDENTITY_SECRET" ]; then
-        die "Failed to parse register_member output for member $i:\n$OUTPUT"
+if [ -f "$MANIFEST_FILE" ] && [ "$FRESH" -eq 0 ]; then
+    # Reload state from existing manifest
+    MEMBER_COUNT=$(python3 -c "import json; print(len(json.load(open('$MANIFEST_FILE'))))" 2>/dev/null || echo 0)
+    if [ "$MEMBER_COUNT" -eq "$TOTAL_MEMBERS" ]; then
+        echo "  Reusing $MEMBER_COUNT existing memberships"
+        for i in $(seq 0 $((TOTAL_MEMBERS - 1))); do
+            LEAF_INDICES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['leafIndex'])" 2>/dev/null))
+            IDENTITY_SECRETS+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['identitySecretHash'])" 2>/dev/null))
+            CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['configAccount'])" 2>/dev/null)
+        done
+        echo "  Config account: $CONFIG_ACCOUNT"
+    else
+        echo "  Manifest has $MEMBER_COUNT members, need $TOTAL_MEMBERS. Re-registering..."
+        FRESH=1
     fi
+fi
 
-    LEAF_INDICES+=("$LEAF_INDEX")
-    IDENTITY_SECRETS+=("$IDENTITY_SECRET")
+if [ -z "$CONFIG_ACCOUNT" ]; then
+    REGISTER_BIN="$LEZ_RLN_DIR/target/release/register_member"
+    (cd "$LEZ_RLN_DIR" && cargo build --release --bin register_member 2>&1 | tail -3)
+    [ -f "$REGISTER_BIN" ] || die "register_member not found at $REGISTER_BIN"
 
-    [ "$i" -gt 0 ] && echo "," >> "$MANIFEST_FILE"
-    cat >> "$MANIFEST_FILE" <<EOF
+    REG_OUTPUT="$STATE_DIR/reg_output.txt"
+    log "  Registering $TOTAL_MEMBERS members..."
+    (cd "$LEZ_RLN_DIR" && "$REGISTER_BIN" --count "$TOTAL_MEMBERS" > "$REG_OUTPUT" 2>&1) || {
+        cat "$REG_OUTPUT" 2>/dev/null || true
+        die "register_member failed"
+    }
+
+    # Parse batch output into per-member chunks
+    REG_OUTPUTS=()
+    MEMBER_IDX=0
+    while IFS= read -r line; do
+        case "$line" in
+            CONFIG_ACCOUNT=*)
+                REG_OUTPUTS[$MEMBER_IDX]="$STATE_DIR/reg_output_$MEMBER_IDX.txt"
+                echo "$line" > "${REG_OUTPUTS[$MEMBER_IDX]}"
+                ;;
+            LEAF_INDEX=*|IDENTITY_SECRET_HASH=*)
+                echo "$line" >> "${REG_OUTPUTS[$MEMBER_IDX]}"
+                if [[ "$line" == IDENTITY_SECRET_HASH=* ]]; then
+                    MEMBER_IDX=$((MEMBER_IDX + 1))
+                fi
+                ;;
+        esac
+    done < "$REG_OUTPUT"
+
+    echo "[" > "$MANIFEST_FILE"
+    for i in $(seq 0 $((TOTAL_MEMBERS - 1))); do
+        OUTPUT=$(cat "${REG_OUTPUTS[$i]}")
+        CONFIG_ACCOUNT=$(echo "$OUTPUT" | grep "^CONFIG_ACCOUNT=" | cut -d= -f2)
+        LEAF_INDEX=$(echo "$OUTPUT" | grep "^LEAF_INDEX=" | cut -d= -f2)
+        IDENTITY_SECRET=$(echo "$OUTPUT" | grep "^IDENTITY_SECRET_HASH=" | cut -d= -f2)
+
+        [ -z "$CONFIG_ACCOUNT" ] || [ -z "$LEAF_INDEX" ] || [ -z "$IDENTITY_SECRET" ] && \
+            die "Failed to parse register_member output for member $i"
+
+        LEAF_INDICES+=("$LEAF_INDEX")
+        IDENTITY_SECRETS+=("$IDENTITY_SECRET")
+
+        [ "$i" -gt 0 ] && echo "," >> "$MANIFEST_FILE"
+        cat >> "$MANIFEST_FILE" <<EOF
   {
     "peerId": "${PEER_IDS[$i]}",
     "leafIndex": $LEAF_INDEX,
@@ -290,15 +323,20 @@ for i in $(seq 0 $((TOTAL_MEMBERS - 1))); do
     "configAccount": "$CONFIG_ACCOUNT"
   }
 EOF
-    echo "    Member $((i+1)): leaf=$LEAF_INDEX"
-    rm -f "${REG_OUTPUTS[$i]}"
-done
+        echo "    Member $((i+1)): leaf=$LEAF_INDEX"
+        rm -f "${REG_OUTPUTS[$i]}"
+    done
 
-echo "]" >> "$MANIFEST_FILE"
-log "  All $TOTAL_MEMBERS members registered"
-echo "  Config account: $CONFIG_ACCOUNT"
+    echo "]" >> "$MANIFEST_FILE"
+    log "  All $TOTAL_MEMBERS members registered"
+    echo "  Config account: $CONFIG_ACCOUNT"
+fi
 
-# Generate keystores
+# Generate keystores (skip if already present)
+KEYSTORE_COUNT=$(find "$STATE_DIR" -maxdepth 1 -name 'rln_keystore_*.json' 2>/dev/null | wc -l | tr -d ' ')
+if [ "$KEYSTORE_COUNT" -ge "$TOTAL_MEMBERS" ] && [ "$FRESH" -eq 0 ]; then
+    echo "  Keystores: $KEYSTORE_COUNT (cached)"
+else
 echo "  Generating keystores..."
 LIBRLN_FILE="$DELIVERY_DIR/librln_v0.9.0.a"
 if [ ! -f "$LIBRLN_FILE" ]; then
@@ -321,7 +359,7 @@ while IFS= read -r line; do
     [[ -n "$line" ]] && NIM_PATH_ARGS+=("$line")
 done < "$DELIVERY_DIR/nimbus-build-system.paths"
 
-SETUP_KS_BIN="$WORK_DIR/setup_keystores"
+SETUP_KS_BIN="$STATE_DIR/setup_keystores"
 nim c -d:release --mm:refc \
     "${NIM_PATH_ARGS[@]}" \
     --passL:"$LIBRLN_FILE" --passL:"-lm" \
@@ -330,9 +368,10 @@ nim c -d:release --mm:refc \
 
 [ -f "$SETUP_KS_BIN" ] || die "Failed to compile setup_keystores.nim"
 
-(cd "$WORK_DIR" && "$SETUP_KS_BIN" "$MANIFEST_FILE") || die "setup_keystores failed"
-KEYSTORE_COUNT=$(ls -1 "$WORK_DIR"/rln_keystore_*.json 2>/dev/null | wc -l | tr -d ' ')
+(cd "$STATE_DIR" && "$SETUP_KS_BIN" "$MANIFEST_FILE") || die "setup_keystores failed"
+KEYSTORE_COUNT=$(find "$STATE_DIR" -maxdepth 1 -name 'rln_keystore_*.json' 2>/dev/null | wc -l | tr -d ' ')
 echo "  Keystores: $KEYSTORE_COUNT"
+fi
 
 # ---------- Phase 4: Build / check modules ----------
 echo "[4/7] Building modules (if needed)..."
@@ -660,10 +699,13 @@ echo "  Waiting for message delivery (sender delay + propagation)..."
 echo ""
 
 SENDER_LOG="$WORK_DIR/node${NUM_NODES}.log"
-# Wait up to 90s for sender to fire
-for t in $(seq 1 90); do
-    SENT=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
-    [ "$SENT" -ge 3 ] && break
+# Wait up to 120s for sender to fire (45s delay + peer discovery + propagation)
+SENT=0
+for t in $(seq 1 120); do
+    if [ -f "$SENDER_LOG" ]; then
+        SENT=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
+        [ "$SENT" -ge 3 ] && break
+    fi
     sleep 1
 done
 
