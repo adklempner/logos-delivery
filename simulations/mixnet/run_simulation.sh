@@ -481,12 +481,37 @@ write_node_config() {
         mix_nodes_json="$mix_nodes_json\"/ip4/127.0.0.1/tcp/$j_port/p2p/${PEER_IDS[$j]}:${MIX_PUBKEYS[$j]}\""
     done
 
-    local node_mode="Core"
-    [ "$i" -ge "$NUM_NODES" ] && node_mode="Edge"
-
-    cat > "$config_file" <<EOF
+    if [ "$i" -ge "$NUM_NODES" ]; then
+        # Sender node: configured like chat2mix on master
+        # Uses Edge mode but core nodes have PX service disabled,
+        # so the PX discovery loop gets no peers and won't cause connection storms
+        cat > "$config_file" <<EOF
 {
-  "mode": "$node_mode",
+  "mode": "Edge",
+  "clusterId": 42,
+  "numShardsInNetwork": 8,
+  "entryNodes": $entry_nodes,
+  "maxMessageSize": "150 KiB",
+  "listenAddress": "127.0.0.1",
+  "tcpPort": $tcp_port,
+  "discv5UdpPort": $disc_port,
+  "nodekey": "${NODEKEYS[$i]}",
+  "mixkey": "${MIXKEYS[$i]}",
+  "mixnodes": [$mix_nodes_json],
+  "mix": true,
+  "enableSpamProtection": true,
+  "colocationLimit": 0,
+  "maxConnsPerPeer": 2,
+  "enableWarmup": false,
+  "rendezvous": false,
+  "logLevel": "TRACE"
+}
+EOF
+    else
+        # Core mix node: relay + lightpush + filter services, no PX/rendezvous
+        cat > "$config_file" <<EOF
+{
+  "mode": "Core",
   "clusterId": 42,
   "numShardsInNetwork": 8,
   "entryNodes": $entry_nodes,
@@ -503,11 +528,11 @@ write_node_config() {
   "maxConnsPerPeer": 2,
   "enableWarmup": false,
   "peerExchangeService": false,
-  "peerExchangeDiscovery": false,
   "rendezvous": false,
   "logLevel": "TRACE"
 }
 EOF
+    fi
 }
 
 # Helper: start a single node (sets LAST_NODE_PID)
