@@ -501,7 +501,7 @@ write_node_config() {
   "mix": true,
   "enableSpamProtection": true,
   "colocationLimit": 0,
-  "maxConnsPerPeer": 2,
+  "maxConnsPerPeer": 5,
   "enableWarmup": false,
   "rendezvous": false,
   "logLevel": "TRACE"
@@ -525,7 +525,7 @@ EOF
   "mix": true,
   "enableSpamProtection": true,
   "colocationLimit": 0,
-  "maxConnsPerPeer": 2,
+  "maxConnsPerPeer": 5,
   "enableWarmup": false,
   "peerExchangeService": false,
   "rendezvous": false,
@@ -676,11 +676,11 @@ if [ "$NUM_CHAT_CLIENTS" -gt 0 ]; then
                 break
             fi
 
-            # Kill and retry
+            # Kill and wait for connections to clean up before retry
             echo "  Edge node $i: no lightpush peers, restarting..."
             kill "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
             wait "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
-            sleep 2
+            sleep 10
         done
     done
 fi
