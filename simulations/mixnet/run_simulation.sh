@@ -528,9 +528,9 @@ start_node() {
     "leafIndex": $leaf_index
   },
   "simulation": {
-    "peerDiscoveryDelayMs": 45000,
-    "messageCount": 3,
-    "messageDelayMs": 2000,
+    "peerDiscoveryDelayMs": 15000,
+    "messageCount": 100,
+    "messageDelayMs": 10000,
     "payload": "e2e_mix_test"
   }
 }
@@ -610,27 +610,47 @@ if [ "$NUM_NODES" -gt 1 ]; then
     [ "$INIT_FAILED" -eq 1 ] && die "One or more core nodes failed to initialize"
 fi
 
-# Start EDGE nodes (NUM_NODES to TOTAL_NODES-1) AFTER core nodes are ready
+# Start EDGE nodes with retry on connection failure
+MAX_EDGE_RETRIES=3
 if [ "$NUM_CHAT_CLIENTS" -gt 0 ]; then
-    log "  Starting edge nodes $NUM_NODES-$((TOTAL_NODES-1))..."
     for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
-        start_node "$i"
-        INSTANCE_PIDS[$i]=$LAST_NODE_PID
-        echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
-        sleep 2
-    done
+        RETRY=0
+        while true; do
+            RETRY=$((RETRY + 1))
+            [ "$RETRY" -gt 1 ] && log "  Edge node $i: retry $RETRY/$MAX_EDGE_RETRIES"
+            [ "$RETRY" -eq 1 ] && log "  Starting edge node $i..."
 
-    # Wait for edge nodes to initialize
-    log "  Waiting for edge nodes to initialize..."
-    INIT_FAILED=0
-    for i in $(seq "$NUM_NODES" $((TOTAL_NODES - 1))); do
-        if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
-            INIT_FAILED=1
-        else
-            log "  Node $i ready"
-        fi
+            start_node "$i"
+            INSTANCE_PIDS[$i]=$LAST_NODE_PID
+            echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
+
+            log "  Waiting for edge node $i..."
+            if ! wait_for_node_init "$i" "${INSTANCE_PIDS[$i]}"; then
+                die "Edge node $i failed to initialize"
+            fi
+            log "  Node $i initialized, checking connectivity..."
+
+            # Wait for peer connection (up to 20s)
+            sleep 20
+            LP_COUNT=$(rg -c 'lightpushCount=[1-9]' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+            if [ "$LP_COUNT" -gt 0 ]; then
+                log "  Node $i connected (lightpush peers found)"
+                break
+            fi
+
+            if [ "$RETRY" -ge "$MAX_EDGE_RETRIES" ]; then
+                echo "  WARNING: Edge node $i has no lightpush peers after $MAX_EDGE_RETRIES attempts"
+                echo "  Continuing anyway — messages may fail"
+                break
+            fi
+
+            # Kill and retry
+            echo "  Edge node $i: no lightpush peers, restarting..."
+            kill "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
+            wait "${INSTANCE_PIDS[$i]}" 2>/dev/null || true
+            sleep 2
+        done
     done
-    [ "$INIT_FAILED" -eq 1 ] && die "One or more edge nodes failed to initialize"
 fi
 
 # Wait for peer discovery across all nodes
@@ -671,8 +691,8 @@ done
 RECEIVER_PID=$!
 INSTANCE_PIDS+=($RECEIVER_PID)
 echo "  Receiver PID: $RECEIVER_PID (port $RECEIVER_PORT)"
-echo "  Waiting for filter subscription (20s)..."
-sleep 20
+echo "  Waiting for filter subscription (30s)..."
+sleep 30
 
 # ---------- Phase 8: Ready ----------
 echo ""
@@ -695,46 +715,53 @@ for i in $(seq 0 $((TOTAL_NODES - 1))); do
     echo "    grep 'Method call' $WORK_DIR/node${i}.log"
 done
 echo ""
-echo "  Waiting for message delivery (sender delay + propagation)..."
+echo "  Monitoring message delivery (Ctrl+C to stop)..."
 echo ""
 
 SENDER_LOG="$WORK_DIR/node${NUM_NODES}.log"
-# Wait up to 120s for sender to fire (45s delay + peer discovery + propagation)
-SENT=0
-for t in $(seq 1 120); do
-    if [ -f "$SENDER_LOG" ]; then
-        SENT=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
-        [ "$SENT" -ge 3 ] && break
+PREV_SENDS=0
+PREV_RECV=0
+
+while true; do
+    SENDS=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
+    RECV=$(rg -c '^>> <' "$RECEIVER_LOG" 2>/dev/null || echo 0)
+
+    TOTAL_INT=0; TOTAL_EXIT=0
+    set +u
+    i=0; while [ "$i" -lt "$NUM_NODES" ]; do
+        INT=$(rg -c 'Intermediate node processing' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+        EXIT=$(rg -c 'Exit node - Received mix' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+        TOTAL_INT=$((TOTAL_INT + INT)); TOTAL_EXIT=$((TOTAL_EXIT + EXIT))
+        i=$((i + 1))
+    done
+    set -u
+
+    # Only print when something changes
+    if [ "$SENDS" -ne "$PREV_SENDS" ] || [ "$RECV" -ne "$PREV_RECV" ]; then
+        TS=$(date '+%H:%M:%S')
+        if [ "$RECV" -gt "$PREV_RECV" ]; then
+            echo "  [$TS] sent=$SENDS  mix_hops=$TOTAL_INT  exits=$TOTAL_EXIT  received=$RECV  ✓"
+        elif [ "$SENDS" -gt "$PREV_SENDS" ]; then
+            echo "  [$TS] sent=$SENDS  mix_hops=$TOTAL_INT  exits=$TOTAL_EXIT  received=$RECV"
+        fi
+        PREV_SENDS=$SENDS
+        PREV_RECV=$RECV
     fi
-    sleep 1
+
+    # Check if sender process is still alive
+    if ! kill -0 "${INSTANCE_PIDS[$NUM_NODES]}" 2>/dev/null; then
+        echo "  Sender process exited"
+        break
+    fi
+
+    sleep 5
 done
-
-# Give mix forwarding + relay + filter time to complete
-sleep 5
-
-echo "  === Message Delivery Report ==="
-SENDS=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
-echo "  Sender:   $SENDS messages entered mix path"
-
-TOTAL_INT=0; TOTAL_EXIT=0; TOTAL_PUB=0
-i=0; while [ "$i" -lt "$NUM_NODES" ]; do
-    INT=$(rg -c 'Intermediate node processing' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-    EXIT=$(rg -c 'Exit node - Received mix' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-    PUB=$(rg -c 'start publish Waku message' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-    TOTAL_INT=$((TOTAL_INT + INT)); TOTAL_EXIT=$((TOTAL_EXIT + EXIT)); TOTAL_PUB=$((TOTAL_PUB + PUB))
-    i=$((i + 1))
-done
-echo "  Mix hops: $TOTAL_INT intermediate, $TOTAL_EXIT exit"
-echo "  Relay:    $TOTAL_PUB gossipsub publishes"
-
-RECV=$(rg -c '^>> <' "$RECEIVER_LOG" 2>/dev/null || echo 0)
-echo "  Receiver: $RECV messages received via filter"
 
 echo ""
+echo "  === Final Report ==="
+echo "  Sent: $SENDS  |  Mix hops: $TOTAL_INT  |  Exits: $TOTAL_EXIT  |  Received: $RECV"
 if [ "$RECV" -ge 1 ]; then
     echo "  E2E delivery confirmed!"
-else
-    echo "  WARNING: Messages not received. Check logs for details."
 fi
 echo ""
 echo "  Press Ctrl+C to stop everything."
