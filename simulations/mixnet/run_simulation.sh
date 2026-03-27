@@ -482,14 +482,15 @@ write_node_config() {
     done
 
     if [ "$i" -ge "$NUM_NODES" ]; then
-        # Sender node: Edge mode with explicit lightpush service peer
-        local service_node="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}"
+        # Sender node: configured like chat2mix on master
+        # Uses Edge mode but core nodes have PX service disabled,
+        # so the PX discovery loop gets no peers and won't cause connection storms
         cat > "$config_file" <<EOF
 {
   "mode": "Edge",
   "clusterId": 42,
   "numShardsInNetwork": 8,
-  "entryNodes": ["$service_node"],
+  "entryNodes": $entry_nodes,
   "maxMessageSize": "150 KiB",
   "listenAddress": "127.0.0.1",
   "tcpPort": $tcp_port,
@@ -503,7 +504,6 @@ write_node_config() {
   "maxConnsPerPeer": 5,
   "enableWarmup": false,
   "rendezvous": false,
-  "lightpushnode": "$service_node",
   "logLevel": "TRACE"
 }
 EOF
@@ -753,45 +753,40 @@ echo ""
 SENDER_LOG="$WORK_DIR/node${NUM_NODES}.log"
 PREV_SENDS=0
 PREV_RECV=0
+TICK=0
 
 while true; do
     SENDS=$(rg -c 'Sending via Lightpush with mix' "$SENDER_LOG" 2>/dev/null || echo 0)
-    RECV=$(rg -c '^>> <' "$RECEIVER_LOG" 2>/dev/null || echo 0)
+    RECV=$(grep -c '^>> ' "$RECEIVER_LOG" 2>/dev/null || echo 0)
+    # Subtract header lines (Welcome, Listening, waiting, ready, >>)
+    RECV=$((RECV > 0 ? RECV - 1 : 0))
 
-    TOTAL_INT=0; TOTAL_EXIT=0
-    set +u
-    i=0; while [ "$i" -lt "$NUM_NODES" ]; do
-        INT=$(rg -c 'Intermediate node processing' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-        EXIT=$(rg -c 'Exit node - Received mix' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
-        TOTAL_INT=$((TOTAL_INT + INT)); TOTAL_EXIT=$((TOTAL_EXIT + EXIT))
-        i=$((i + 1))
-    done
-    set -u
+    TICK=$((TICK + 1))
 
-    # Only print when something changes
-    if [ "$SENDS" -ne "$PREV_SENDS" ] || [ "$RECV" -ne "$PREV_RECV" ]; then
+    # Print on change or every 30s (6 ticks × 5s)
+    if [ "$SENDS" -ne "$PREV_SENDS" ] || [ "$RECV" -ne "$PREV_RECV" ] || [ $((TICK % 6)) -eq 0 ]; then
         TS=$(date '+%H:%M:%S')
-        if [ "$RECV" -gt "$PREV_RECV" ]; then
-            echo "  [$TS] sent=$SENDS  mix_hops=$TOTAL_INT  exits=$TOTAL_EXIT  received=$RECV  ✓"
-        elif [ "$SENDS" -gt "$PREV_SENDS" ]; then
-            echo "  [$TS] sent=$SENDS  mix_hops=$TOTAL_INT  exits=$TOTAL_EXIT  received=$RECV"
-        fi
+        STATUS=""
+        [ "$RECV" -gt "$PREV_RECV" ] && STATUS=" ✓"
+        echo "  [$TS] sent=$SENDS  received=$RECV$STATUS"
         PREV_SENDS=$SENDS
         PREV_RECV=$RECV
     fi
 
     # Check if sender process is still alive
+    set +u
     if ! kill -0 "${INSTANCE_PIDS[$NUM_NODES]}" 2>/dev/null; then
         echo "  Sender process exited"
         break
     fi
+    set -u
 
     sleep 5
 done
 
 echo ""
 echo "  === Final Report ==="
-echo "  Sent: $SENDS  |  Mix hops: $TOTAL_INT  |  Exits: $TOTAL_EXIT  |  Received: $RECV"
+echo "  Sent: $SENDS  |  Received: $RECV"
 if [ "$RECV" -ge 1 ]; then
     echo "  E2E delivery confirmed!"
 fi
