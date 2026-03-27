@@ -232,6 +232,13 @@ type WakuNodeConf* = object
       name: "relay-service-ratio"
     .}: string
 
+    maxConnsPerPeer* {.
+      desc:
+        "Maximum number of connections per peer. Set higher to allow dedicated mix connections.",
+      defaultValue: 1,
+      name: "max-conns-per-peer"
+    .}: int
+
     colocationLimit* {.
       desc:
         "Max num allowed peers from the same IP. Set it to 0 to remove the limitation.",
@@ -1005,6 +1012,8 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.withExtMultiAddrs(n.extMultiAddrs)
   b.withExtMultiAddrsOnly(n.extMultiAddrsOnly)
   b.withMaxConnections(n.maxConnections)
+  if n.maxConnsPerPeer > 0:
+    b.withMaxConnsPerPeer(n.maxConnsPerPeer)
 
   if n.relayServiceRatio != "":
     b.withRelayServiceRatio(n.relayServiceRatio)
