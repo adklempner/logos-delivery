@@ -503,6 +503,7 @@ write_node_config() {
   "maxConnsPerPeer": 2,
   "enableWarmup": false,
   "peerExchangeService": false,
+  "peerExchangeDiscovery": false,
   "rendezvous": false,
   "logLevel": "TRACE"
 }
@@ -632,9 +633,13 @@ if [ "$NUM_CHAT_CLIENTS" -gt 0 ]; then
             fi
             log "  Node $i initialized, checking connectivity..."
 
-            # Wait for peer connection (up to 20s)
-            sleep 20
-            LP_COUNT=$(rg -c 'lightpushCount=[1-9]' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+            # Wait for peer connection (up to 10s, check every 2s)
+            LP_COUNT=0
+            for _lp in $(seq 1 5); do
+                sleep 2
+                LP_COUNT=$(rg -c 'lightpushCount=[1-9]' "$WORK_DIR/node${i}.log" 2>/dev/null || echo 0)
+                [ "$LP_COUNT" -gt 0 ] && break
+            done
             if [ "$LP_COUNT" -gt 0 ]; then
                 log "  Node $i connected (lightpush peers found)"
                 break
