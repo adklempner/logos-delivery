@@ -484,13 +484,6 @@ write_node_config() {
     local node_mode="Core"
     [ "$i" -ge "$NUM_NODES" ] && node_mode="Edge"
 
-    # Edge nodes: disable peer discovery, only connect to service node
-    local extra_config=""
-    if [ "$node_mode" = "Edge" ]; then
-        extra_config='"peerExchangeService": false,
-  "rendezvous": false,'
-    fi
-
     cat > "$config_file" <<EOF
 {
   "mode": "$node_mode",
@@ -509,7 +502,8 @@ write_node_config() {
   "colocationLimit": 0,
   "maxConnsPerPeer": 2,
   "enableWarmup": false,
-  $extra_config
+  "peerExchangeService": false,
+  "rendezvous": false,
   "logLevel": "TRACE"
 }
 EOF
