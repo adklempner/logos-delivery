@@ -712,7 +712,6 @@ done
     --ports-shift=$((200 + NUM_NODES)) \
     --cluster-id=42 \
     --num-shards-in-network=8 \
-    --shard=0 \
     --servicenode="/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}" \
     --log-level=TRACE \
     --nodekey="${NODEKEYS[$((NUM_NODES + NUM_CHAT_CLIENTS))]}" \
