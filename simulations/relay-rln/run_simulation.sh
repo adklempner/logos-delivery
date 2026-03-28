@@ -161,7 +161,7 @@ log "  All modules present."
 # ---------- Phase 4: Stage + Start nodes ----------
 echo "[4/5] Starting $NUM_NODES relay nodes..."
 
-LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module"
+LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module,mix_simulation_module"
 WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
 
 for i in $(seq 0 $((NUM_NODES - 1))); do
@@ -212,6 +212,12 @@ EOF
     cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblez_rln_ffi.$EXT" "$MDIR/liblogos_rln_module/" 2>/dev/null || true
     echo "{\"name\":\"liblogos_rln_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_rln_module.$EXT\"},\"dependencies\":[\"liblogos_execution_zone_wallet_module\"],\"capabilities\":[]}" > "$MDIR/liblogos_rln_module/manifest.json"
 
+    if [ -d "$RLN_PROJECT_DIR/mix-simulation-module/result/lib" ]; then
+        mkdir -p "$MDIR/mix_simulation_module"
+        cp -L "$RLN_PROJECT_DIR/mix-simulation-module/result/lib/libmix_simulation_module.$EXT" "$MDIR/mix_simulation_module/"
+        echo "{\"name\":\"mix_simulation_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"libmix_simulation_module.$EXT\"},\"dependencies\":[\"delivery_module\",\"liblogos_rln_module\"],\"capabilities\":[]}" > "$MDIR/mix_simulation_module/manifest.json"
+    fi
+
     mkdir -p "$MDIR/delivery_module"
     cp -L "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/delivery_module_plugin.$EXT" "$MDIR/delivery_module/"
     cp -L "$RLN_PROJECT_DIR/logos-delivery-module/result/lib/liblogosdelivery.$EXT" "$MDIR/delivery_module/" 2>/dev/null || true
@@ -220,19 +226,28 @@ EOF
 
     log "  Starting node $i (port $TCP_PORT, leaf $LEAF_INDEX)..."
 
-    # Node 0 also sends test messages after setup
     if [ "$i" -eq 0 ]; then
+        # Node 0: also sends test messages via mix_simulation_module after delay
+        RUNNER_CONFIG="$STATE_DIR/runner0_config.json"
+        cat > "$RUNNER_CONFIG" <<REOF
+{
+  "delivery": $(cat "$NODE_CONFIG"),
+  "contentTopic": "$CONTENT_TOPIC",
+  "rln": {
+    "configAccountId": "$CONFIG_ACCOUNT",
+    "leafIndex": $LEAF_INDEX
+  },
+  "simulation": {
+    "peerDiscoveryDelayMs": 30000,
+    "messageCount": 10,
+    "messageDelayMs": 5000,
+    "payload": "relay-rln-test"
+  }
+}
+REOF
         TMPDIR=/tmp "$LOGOSCORE" -m "$MDIR" -l "$LOAD_ORDER" \
             -c "$WALLET_CALL" \
-            -c "delivery_module.createNode(@$NODE_CONFIG)" \
-            -c "delivery_module.start()" \
-            -c "delivery_module.subscribe($CONTENT_TOPIC)" \
-            -c "delivery_module.setRlnConfig($CONFIG_ACCOUNT,$LEAF_INDEX)" \
-            -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
-            -c "liblogos_rln_module.start_merkle_proof_broadcast($CONFIG_ACCOUNT,$LEAF_INDEX)" \
-            -c "delivery_module.sendTest($CONTENT_TOPIC,relay-rln-test-1)" \
-            -c "delivery_module.sendTest($CONTENT_TOPIC,relay-rln-test-2)" \
-            -c "delivery_module.sendTest($CONTENT_TOPIC,relay-rln-test-3)" \
+            -c "mix_simulation_module.start(@$RUNNER_CONFIG)" \
             </dev/null >"$LOG_FILE" 2>&1 &
     else
         TMPDIR=/tmp "$LOGOSCORE" -m "$MDIR" -l "$LOAD_ORDER" \
@@ -250,7 +265,7 @@ EOF
 
     # Wait for init
     EXPECTED_CALLS=7
-    [ "$i" -eq 0 ] && EXPECTED_CALLS=10  # 7 setup + 3 sendTest
+    [ "$i" -eq 0 ] && EXPECTED_CALLS=2  # wallet.open + mix_simulation_module.start
     for t in $(seq 1 90); do
         N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}
         [ "$N" -ge "$EXPECTED_CALLS" ] && break
