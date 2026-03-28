@@ -1,0 +1,55 @@
+  Using saved supply holding: CePvd47PqDxWSa7JSiJai86MmjssfuHBN6aAsxo9Rot5
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+  Funding new user account...
+  User payment holding: 2Vy7dr5DiFtHuuXRa7Ex1ex3WL7uPm1xWnn5ackybPqn
+  User funded with 100000000 tokens
+
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+CONFIG_ACCOUNT=G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR
+LEAF_INDEX=0
+IDENTITY_SECRET_HASH=4f5931ff75425bde030f0affcf4b2da83b7338e33b894bbc3711200eb40e8f24
+  Registered member 1/5: leaf=0
+  Using saved supply holding: CePvd47PqDxWSa7JSiJai86MmjssfuHBN6aAsxo9Rot5
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+  Funding new user account...
+  User payment holding: 5vRrYWCcXUJAN6RQJzFHuek2ZT9621hKFcT32zP2QEuw
+  User funded with 100000000 tokens
+
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+CONFIG_ACCOUNT=G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR
+LEAF_INDEX=1
+IDENTITY_SECRET_HASH=ba8334636ec5c24e3d6216b22b31f367eea2c038028258417e64804f9121ce03
+  Registered member 2/5: leaf=1
+  Using saved supply holding: CePvd47PqDxWSa7JSiJai86MmjssfuHBN6aAsxo9Rot5
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+  Funding new user account...
+  User payment holding: 473mL2HfeJWuQ5LxWxwmsdNVeyXYxzC15kYAiLEstes8
+  User funded with 100000000 tokens
+
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+CONFIG_ACCOUNT=G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR
+LEAF_INDEX=2
+IDENTITY_SECRET_HASH=392b95e4b64d86f17756fcde4a1519e92e479d5278ef6a9e75aed4582d58c61c
+  Registered member 3/5: leaf=2
+  Using saved supply holding: CePvd47PqDxWSa7JSiJai86MmjssfuHBN6aAsxo9Rot5
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+  Funding new user account...
+  User payment holding: Fhn3joQiPhueZ7FwRWfQCr523KsYf4TKW9Tri2KAnmiq
+  User funded with 100000000 tokens
+
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+CONFIG_ACCOUNT=G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR
+LEAF_INDEX=3
+IDENTITY_SECRET_HASH=0dc70e166b54cd2bd0227ed625d87605f9bcfc208766a4f5e4a9d4f790ac7c04
+  Registered member 4/5: leaf=3
+  Using saved supply holding: CePvd47PqDxWSa7JSiJai86MmjssfuHBN6aAsxo9Rot5
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+  Funding new user account...
+  User payment holding: 3XRbWa3CEJbdAm1AbBd59ziDXhnmSNCvTWXHvqhZjb35
+  User funded with 100000000 tokens
+
+Stored persistent accounts at "/Users/arseniy/Waku/Logos/rln-zkvm/dev/storage.json"
+CONFIG_ACCOUNT=G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR
+LEAF_INDEX=4
+IDENTITY_SECRET_HASH=3dc43fbcdc45bc6a2a5c8cfcd9f007da179ae1d57fe4ecfbfc289deb3fcacb12
+  Registered member 5/5: leaf=4

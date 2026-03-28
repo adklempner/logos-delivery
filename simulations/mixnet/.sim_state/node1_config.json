@@ -1,0 +1,21 @@
+{
+  "mode": "Core",
+  "clusterId": 42,
+  "numShardsInNetwork": 8,
+  "entryNodes": ["/ip4/127.0.0.1/tcp/60001/p2p/16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRHKYdLdAfjgbWM6o"],
+  "maxMessageSize": "150 KiB",
+  "listenAddress": "127.0.0.1",
+  "tcpPort": 60002,
+  "discv5UdpPort": 9002,
+  "nodekey": "09e9d134331953357bd38bbfce8edb377f4b6308b4f3bfbe85c610497053d684",
+  "mixkey": "c86029e02c05a7e25182974b519d0d52fcbafeca6fe191fbb64857fb05be1a53",
+  "mixnodes": ["/ip4/127.0.0.1/tcp/60001/p2p/16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRHKYdLdAfjgbWM6o:9d09ce624f76e8f606265edb9cca2b7de9b41772a6d784bddaf92ffa8fba7d2c", "/ip4/127.0.0.1/tcp/60003/p2p/16Uiu2HAmTEDHwAziWUSz6ZE23h5vxG2o4Nn7GazhMor4bVuMXTrA:275cd6889e1f29ca48e5b9edb800d1a94f49f13d393a0ecf1a07af753506de6c", "/ip4/127.0.0.1/tcp/60004/p2p/16Uiu2HAmPwRKZajXtfb1Qsv45VVfRZgK3ENdfmnqzSrVm3BczF6f:e0ed594a8d506681be075e8e23723478388fb182477f7a469309a25e7076fc18"],
+  "mix": true,
+  "enableSpamProtection": true,
+  "colocationLimit": 0,
+  "maxConnsPerPeer": 5,
+  "enableWarmup": false,
+  "peerExchangeService": false,
+  "rendezvous": false,
+  "logLevel": "TRACE"
+}
