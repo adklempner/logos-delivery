@@ -203,10 +203,13 @@ EOF
 
     mkdir -p "$MDIR/liblogos_execution_zone_wallet_module"
     cp -L "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" "$MDIR/liblogos_execution_zone_wallet_module/"
+    [ -f "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" ] && \
+      cp -L "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" "$MDIR/liblogos_execution_zone_wallet_module/"
     echo "{\"name\":\"liblogos_execution_zone_wallet_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_execution_zone_wallet_module.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$MDIR/liblogos_execution_zone_wallet_module/manifest.json"
 
     mkdir -p "$MDIR/liblogos_rln_module"
     cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" "$MDIR/liblogos_rln_module/"
+    cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblez_rln_ffi.$EXT" "$MDIR/liblogos_rln_module/" 2>/dev/null || true
     echo "{\"name\":\"liblogos_rln_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_rln_module.$EXT\"},\"dependencies\":[\"liblogos_execution_zone_wallet_module\"],\"capabilities\":[]}" > "$MDIR/liblogos_rln_module/manifest.json"
 
     mkdir -p "$MDIR/delivery_module"
