@@ -9,6 +9,7 @@ logScope:
 ##############################
 type RlnRelayConfBuilder* = object
   enabled*: Option[bool]
+  logosCore*: Option[bool]
   chainId*: Option[UInt256]
   ethClientUrls*: Option[seq[string]]
   ethContractAddress*: Option[string]
@@ -24,6 +25,9 @@ proc init*(T: type RlnRelayConfBuilder): RlnRelayConfBuilder =
 
 proc withEnabled*(b: var RlnRelayConfBuilder, enabled: bool) =
   b.enabled = some(enabled)
+
+proc withLogosCore*(b: var RlnRelayConfBuilder, logosCore: bool) =
+  b.logosCore = some(logosCore)
 
 proc withChainId*(b: var RlnRelayConfBuilder, chainId: uint | UInt256) =
   when chainId is uint:
@@ -59,8 +63,7 @@ proc build*(b: RlnRelayConfBuilder): Result[Option[RlnRelayConf], string] =
   if not b.enabled.get(false):
     return ok(none(RlnRelayConf))
 
-  if b.chainId.isNone():
-    return err("RLN Relay Chain Id is not specified")
+  let isLogosCore = b.logosCore.get(false)
 
   let creds =
     if b.credPath.isSome() and b.credPassword.isSome():
@@ -72,26 +75,32 @@ proc build*(b: RlnRelayConfBuilder): Result[Option[RlnRelayConf], string] =
     else:
       none(RlnRelayCreds)
 
-  if b.dynamic.isNone():
-    return err("rlnRelay.dynamic is not specified")
-  if b.ethClientUrls.get(newSeq[string](0)).len == 0:
-    return err("rlnRelay.ethClientUrls is not specified")
-  if b.ethContractAddress.get("") == "":
-    return err("rlnRelay.ethContractAddress is not specified")
   if b.epochSizeSec.isNone():
     return err("rlnRelay.epochSizeSec is not specified")
   if b.userMessageLimit.isNone():
     return err("rlnRelay.userMessageLimit is not specified")
 
+  if not isLogosCore:
+    # Ethereum-specific validation
+    if b.chainId.isNone():
+      return err("RLN Relay Chain Id is not specified")
+    if b.dynamic.isNone():
+      return err("rlnRelay.dynamic is not specified")
+    if b.ethClientUrls.get(newSeq[string](0)).len == 0:
+      return err("rlnRelay.ethClientUrls is not specified")
+    if b.ethContractAddress.get("") == "":
+      return err("rlnRelay.ethContractAddress is not specified")
+
   return ok(
     some(
       RlnRelayConf(
-        chainId: b.chainId.get(),
+        logosCore: isLogosCore,
+        chainId: b.chainId.get(UInt256.zero),
         credIndex: b.credIndex,
         creds: creds,
-        dynamic: b.dynamic.get(),
-        ethClientUrls: b.ethClientUrls.get(),
-        ethContractAddress: b.ethContractAddress.get(),
+        dynamic: b.dynamic.get(false),
+        ethClientUrls: b.ethClientUrls.get(@[]),
+        ethContractAddress: b.ethContractAddress.get(""),
         epochSizeSec: b.epochSizeSec.get(),
         userMessageLimit: b.userMessageLimit.get(),
       )
