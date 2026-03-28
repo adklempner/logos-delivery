@@ -42,7 +42,7 @@ proc logosdelivery_init(): cint {.dynlib, exportc, cdecl.} =
   return RET_OK
 
 proc logosdelivery_set_rln_fetcher(
-    ctx: ptr FFIContext[Waku], fetcher: RlnFetcherFunc, fetcherData: pointer
+    ctx: ptr FFIContext[Waku], fetcher: mix_rln_client.RlnFetcherFunc, fetcherData: pointer
 ) {.dynlib, exportc, cdecl.} =
   if fetcher.isNil:
     echo "error: nil fetcher in logosdelivery_set_rln_fetcher"

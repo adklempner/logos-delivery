@@ -20,6 +20,8 @@ import
   ../waku_core,
   ../waku_core/codecs,
   ../waku_rln_relay,
+  ../waku_rln_relay/logos_core_client as relay_rln_client,
+  ../waku_rln_relay/group_manager/logos_core/group_manager as logos_core_gm,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -392,8 +394,6 @@ proc setupProtocols(
 
     # For logos-core mode: wire callbacks and start group sync
     if rlnRelayConf.logosCore and not node.wakuRlnRelay.isNil:
-      import ../waku_rln_relay/logos_core_client as relay_rln_client
-      import ../waku_rln_relay/group_manager/logos_core/group_manager as logos_core_gm
       let gm = cast[LogosCoreGroupManager](node.wakuRlnRelay.groupManager)
       gm.setFetchLatestRoots(relay_rln_client.makeFetchLatestRoots())
       gm.setFetchMerkleProof(relay_rln_client.makeFetchMerkleProof())
