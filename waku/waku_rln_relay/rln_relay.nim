@@ -16,6 +16,7 @@ import
   stew/[byteutils, arrayops]
 import
   ./group_manager,
+  ./group_manager/logos_core/group_manager as logos_core_gm,
   ./rln,
   ./conversion_utils,
   ./constants,
@@ -418,19 +419,23 @@ proc mount(
     else:
       (none(string), none(string))
 
-  groupManager = OnchainGroupManager(
-    userMessageLimit: some(conf.userMessageLimit),
-    ethClientUrls: conf.ethClientUrls,
-    ethContractAddress: $conf.ethContractAddress,
-    chainId: conf.chainId,
-    rlnInstance: rlnInstance,
-    registrationHandler: registrationHandler,
-    keystorePath: rlnRelayCredPath,
-    keystorePassword: rlnRelayCredPassword,
-    ethPrivateKey: conf.ethPrivateKey,
-    membershipIndex: conf.credIndex,
-    onFatalErrorAction: conf.onFatalErrorAction,
-  )
+  if conf.logosCore:
+    groupManager = newLogosCoreGroupManager(rlnInstance)
+    groupManager.userMessageLimit = some(conf.userMessageLimit)
+  else:
+    groupManager = OnchainGroupManager(
+      userMessageLimit: some(conf.userMessageLimit),
+      ethClientUrls: conf.ethClientUrls,
+      ethContractAddress: $conf.ethContractAddress,
+      chainId: conf.chainId,
+      rlnInstance: rlnInstance,
+      registrationHandler: registrationHandler,
+      keystorePath: rlnRelayCredPath,
+      keystorePassword: rlnRelayCredPassword,
+      ethPrivateKey: conf.ethPrivateKey,
+      membershipIndex: conf.credIndex,
+      onFatalErrorAction: conf.onFatalErrorAction,
+    )
 
   # Initialize the groupManager
   (await groupManager.init()).isOkOr:
@@ -451,6 +456,9 @@ proc mount(
     let onchainManager = cast[OnchainGroupManager](groupManager)
     wakuRlnRelay.rootChangesFuture = onchainManager.trackRootChanges()
 
+  # logos-core group manager: startGroupSync is deferred until callbacks are set
+  # by the FFI layer (via setRlnFetcher/setRlnConfig). See logos_core_client.nim.
+
   # Start epoch monitoring in the background
   wakuRlnRelay.epochMonitorFuture = monitorEpochs(wakuRlnRelay)
 
@@ -467,6 +475,14 @@ proc mount(
     return err("Proof generator provider cannot be set: " & $error)
 
   return ok(wakuRlnRelay)
+
+proc startLogosCoreSync*(rlnPeer: WakuRLNRelay): Future[Result[void, string]] {.async.} =
+  ## Start the logos-core group manager polling loop.
+  ## Must be called after FFI callbacks are registered via logos_core_client.
+  if rlnPeer.groupManager of LogosCoreGroupManager:
+    let gm = cast[LogosCoreGroupManager](rlnPeer.groupManager)
+    return await gm.startGroupSync()
+  return err("not a LogosCoreGroupManager")
 
 proc isReady*(rlnPeer: WakuRLNRelay): Future[bool] {.async.} =
   ## returns true if the rln-relay protocol is ready to relay messages
