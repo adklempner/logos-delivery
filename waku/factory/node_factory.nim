@@ -374,6 +374,7 @@ proc setupProtocols(
     let rlnRelayConf = conf.rlnRelayConf.get()
     let rlnConf = WakuRlnConfig(
       dynamic: rlnRelayConf.dynamic,
+      logosCore: rlnRelayConf.logosCore,
       credIndex: rlnRelayConf.credIndex,
       ethContractAddress: rlnRelayConf.ethContractAddress,
       chainId: rlnRelayConf.chainId,
@@ -388,6 +389,16 @@ proc setupProtocols(
       await node.mountRlnRelay(rlnConf)
     except CatchableError:
       return err("failed to mount waku RLN relay protocol: " & getCurrentExceptionMsg())
+
+    # For logos-core mode: wire callbacks and start group sync
+    if rlnRelayConf.logosCore and not node.wakuRlnRelay.isNil:
+      import ../waku_rln_relay/logos_core_client as relay_rln_client
+      import ../waku_rln_relay/group_manager/logos_core/group_manager as logos_core_gm
+      let gm = cast[LogosCoreGroupManager](node.wakuRlnRelay.groupManager)
+      gm.setFetchLatestRoots(relay_rln_client.makeFetchLatestRoots())
+      gm.setFetchMerkleProof(relay_rln_client.makeFetchMerkleProof())
+      (await gm.startGroupSync()).isOkOr:
+        return err("failed to start logos-core RLN group sync: " & $error)
 
   # NOTE Must be mounted after relay
   if conf.lightPush:

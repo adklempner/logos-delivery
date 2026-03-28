@@ -2,7 +2,8 @@ import ffi
 import std/locks
 import chronicles
 import waku/factory/waku
-import waku/waku_mix/logos_core_client
+import waku/waku_mix/logos_core_client as mix_rln_client
+import waku/waku_rln_relay/logos_core_client as relay_rln_client
 
 declareLibrary("logosdelivery")
 
@@ -46,14 +47,16 @@ proc logosdelivery_set_rln_fetcher(
   if fetcher.isNil:
     echo "error: nil fetcher in logosdelivery_set_rln_fetcher"
     return
-  setRlnFetcher(fetcher, fetcherData)
+  mix_rln_client.setRlnFetcher(fetcher, fetcherData)
+  relay_rln_client.setRlnFetcher(fetcher, fetcherData)
 
 proc logosdelivery_set_rln_config(
     ctx: ptr FFIContext[Waku], configAccountId: cstring, leafIndex: cint
 ): cint {.dynlib, exportc, cdecl.} =
   if configAccountId.isNil:
     return RET_ERR
-  setRlnConfig($configAccountId, leafIndex.int)
+  mix_rln_client.setRlnConfig($configAccountId, leafIndex.int)
+  relay_rln_client.setRlnConfig($configAccountId, leafIndex.int)
   return RET_OK
 
 proc logosdelivery_push_roots(
@@ -61,12 +64,14 @@ proc logosdelivery_push_roots(
 ) {.dynlib, exportc, cdecl.} =
   if rootsJson.isNil:
     return
-  pushRoots($rootsJson)
+  mix_rln_client.pushRoots($rootsJson)
+  relay_rln_client.pushRoots($rootsJson)
 
 proc logosdelivery_push_proof(
     ctx: ptr FFIContext[Waku], proofJson: cstring
 ) {.dynlib, exportc, cdecl.} =
   if proofJson.isNil:
     return
-  pushProof($proofJson)
+  mix_rln_client.pushProof($proofJson)
+  relay_rln_client.pushProof($proofJson)
 
