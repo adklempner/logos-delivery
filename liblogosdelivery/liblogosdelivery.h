@@ -106,6 +106,22 @@ extern "C"
   // Set RLN configuration: config account ID and leaf index for this node.
   int logosdelivery_set_rln_config(void *ctx, const char *configAccountId, int leafIndex);
 
+  // Generate an RLN identity from a wallet account.
+  // walletAccountId: the wallet account ID to derive identity from
+  // callback receives JSON: {"id_commitment": "hex...", "id_secret_hash": "hex..."}
+  int logosdelivery_generate_identity(void *ctx,
+                                      FFICallBack callback,
+                                      void *userData,
+                                      const char *walletAccountId);
+
+  // Register a membership on the RLN tree via the gifter service.
+  // paramsJson: JSON object with configAccountId, userHoldingAccountId, idCommitment, rateLimit
+  // callback receives JSON: {"leaf_index": N, "tx_result": "..."}
+  int logosdelivery_register_member(void *ctx,
+                                    FFICallBack callback,
+                                    void *userData,
+                                    const char *paramsJson);
+
 #ifdef __cplusplus
 }
 #endif

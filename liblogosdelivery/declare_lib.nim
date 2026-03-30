@@ -1,5 +1,6 @@
 import ffi
 import std/locks
+import results
 import chronicles
 import waku/factory/waku
 import waku/waku_mix/logos_core_client as mix_rln_client
@@ -74,4 +75,50 @@ proc logosdelivery_push_proof(
     return
   mix_rln_client.pushProof($proofJson)
   relay_rln_client.pushProof($proofJson)
+
+proc logosdelivery_generate_identity(
+    ctx: ptr FFIContext[Waku], callback: FFICallBack, userData: pointer,
+    walletAccountId: cstring
+): cint {.dynlib, exportc, cdecl.} =
+  if walletAccountId.isNil:
+    if not callback.isNil:
+      let msg = "walletAccountId is nil"
+      callback(RET_ERR, unsafeAddr msg[0], cast[csize_t](msg.len), userData)
+    return RET_ERR
+
+  # Call the fetcher with "generate_identity" method
+  let result = relay_rln_client.callRlnFetcher("generate_identity", $walletAccountId)
+  if result.isErr:
+    if not callback.isNil:
+      let errMsg = result.error
+      callback(RET_ERR, unsafeAddr errMsg[0], cast[csize_t](errMsg.len), userData)
+    return RET_ERR
+
+  if not callback.isNil:
+    let json = result.get()
+    callback(RET_OK, unsafeAddr json[0], cast[csize_t](json.len), userData)
+  return RET_OK
+
+proc logosdelivery_register_member(
+    ctx: ptr FFIContext[Waku], callback: FFICallBack, userData: pointer,
+    paramsJson: cstring
+): cint {.dynlib, exportc, cdecl.} =
+  if paramsJson.isNil:
+    if not callback.isNil:
+      let msg = "paramsJson is nil"
+      callback(RET_ERR, unsafeAddr msg[0], cast[csize_t](msg.len), userData)
+    return RET_ERR
+
+  # Call the fetcher with "register_member" method
+  let result = relay_rln_client.callRlnFetcher("register_member", $paramsJson)
+  if result.isErr:
+    if not callback.isNil:
+      let errMsg = result.error
+      callback(RET_ERR, unsafeAddr errMsg[0], cast[csize_t](errMsg.len), userData)
+    return RET_ERR
+
+  if not callback.isNil:
+    let json = result.get()
+    callback(RET_OK, unsafeAddr json[0], cast[csize_t](json.len), userData)
+  return RET_OK
 

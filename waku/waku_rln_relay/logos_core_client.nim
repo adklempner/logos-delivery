@@ -86,7 +86,7 @@ type FetchResult = object
   errMsg: string
   success: bool
 
-proc callRlnFetcher(methodName: string, params: string): Result[string, string] {.gcsafe.} =
+proc callRlnFetcher*(methodName: string, params: string): Result[string, string] {.gcsafe.} =
   {.gcsafe.}:
     rlnFetcherLock.acquire()
     let fetcher = rlnFetcher
