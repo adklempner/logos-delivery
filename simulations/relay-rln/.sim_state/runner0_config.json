@@ -11,6 +11,8 @@
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
+  "rlnRelayIdentitySecretHash": "4f5931ff75425bde030f0affcf4b2da83b7338e33b894bbc3711200eb40e8f24",
+  "rlnRelayCredIndex": 0,
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,
@@ -25,7 +27,7 @@
     "leafIndex": 0
   },
   "simulation": {
-    "peerDiscoveryDelayMs": 30000,
+    "peerDiscoveryDelayMs": 60000,
     "messageCount": 10,
     "messageDelayMs": 5000,
     "payload": "relay-rln-test"

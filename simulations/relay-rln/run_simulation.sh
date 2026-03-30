@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 3-node relay simulation with RLN spam protection via logos-core.
-# Each node runs logoscore with delivery_module + rln_module.
+# Runs nodes, sends messages, verifies proofs are generated and validated.
+# Exit code 0 = all checks pass, 1 = verification failed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,6 +48,7 @@ SEQUENCER_PID=""
 OWN_SEQUENCER=0
 INSTANCE_PIDS=()
 MODULES_DIRS=()
+EXIT_CODE=0
 
 cleanup() {
     set +u
@@ -64,6 +66,7 @@ cleanup() {
     done
     echo "  Logs: $STATE_DIR"
     echo "Done."
+    exit "$EXIT_CODE"
 }
 trap cleanup EXIT
 
@@ -75,7 +78,7 @@ pkill -f 'logos_host' 2>/dev/null || true
 sleep 1
 
 # ---------- Phase 1: Sequencer ----------
-echo "[1/5] Sequencer..."
+echo "[1/6] Sequencer..."
 (cd "$RLN_PROJECT_DIR" && git submodule update --init lssa 2>/dev/null || true)
 
 if nc -z 127.0.0.1 3040 2>/dev/null && [ "$FRESH" -eq 0 ]; then
@@ -97,7 +100,7 @@ else
 fi
 
 # ---------- Phase 2: Deploy + Register ----------
-echo "[2/5] Programs + members..."
+echo "[2/6] Programs + members..."
 LEZ_RLN_DIR="$RLN_PROJECT_DIR/lez-rln"
 export NSSA_WALLET_HOME_DIR="$RLN_PROJECT_DIR/dev"
 export WALLET_CONFIG="$NSSA_WALLET_HOME_DIR/wallet_config.json"
@@ -140,13 +143,15 @@ fi
 
 # Parse manifest
 LEAF_INDICES=()
+ID_SECRET_HASHES=()
 for i in $(seq 0 $((NUM_NODES - 1))); do
     LEAF_INDICES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['leafIndex'])" 2>/dev/null))
+    ID_SECRET_HASHES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['identitySecretHash'])" 2>/dev/null))
 done
 CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[0]['configAccount'])" 2>/dev/null)
 
-# ---------- Phase 3: Build modules ----------
-echo "[3/5] Modules..."
+# ---------- Phase 3: Check modules ----------
+echo "[3/6] Modules..."
 LOGOSCORE="${LOGOSCORE:-$(nix build github:logos-co/logos-liblogos/7df6195 --override-input logos-cpp-sdk github:logos-co/logos-cpp-sdk/a4bd66c --no-link --print-out-paths)/bin/logoscore}"
 WALLET_MODULE_RESULT="$RLN_PROJECT_DIR/logos-rln-module/result-wallet"
 
@@ -159,7 +164,7 @@ done
 log "  All modules present."
 
 # ---------- Phase 4: Stage + Start nodes ----------
-echo "[4/5] Starting $NUM_NODES relay nodes..."
+echo "[4/6] Starting $NUM_NODES relay nodes..."
 
 LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module,mix_simulation_module"
 WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
@@ -168,6 +173,7 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
     TCP_PORT=$((BASE_TCP_PORT + i))
     DISC_PORT=$((BASE_DISC_PORT + i))
     LEAF_INDEX="${LEAF_INDICES[$i]}"
+    ID_SECRET_HASH="${ID_SECRET_HASHES[$i]}"
     NODE_CONFIG="$STATE_DIR/node${i}_config.json"
     LOG_FILE="$STATE_DIR/node${i}.log"
 
@@ -187,6 +193,8 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
+  "rlnRelayIdentitySecretHash": "$ID_SECRET_HASH",
+  "rlnRelayCredIndex": $LEAF_INDEX,
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,
@@ -227,7 +235,6 @@ EOF
     log "  Starting node $i (port $TCP_PORT, leaf $LEAF_INDEX)..."
 
     if [ "$i" -eq 0 ]; then
-        # Node 0: also sends test messages via mix_simulation_module after delay
         RUNNER_CONFIG="$STATE_DIR/runner0_config.json"
         cat > "$RUNNER_CONFIG" <<REOF
 {
@@ -238,7 +245,7 @@ EOF
     "leafIndex": $LEAF_INDEX
   },
   "simulation": {
-    "peerDiscoveryDelayMs": 30000,
+    "peerDiscoveryDelayMs": 60000,
     "messageCount": 10,
     "messageDelayMs": 5000,
     "payload": "relay-rln-test"
@@ -265,7 +272,7 @@ REOF
 
     # Wait for init
     EXPECTED_CALLS=7
-    [ "$i" -eq 0 ] && EXPECTED_CALLS=2  # wallet.open + mix_simulation_module.start
+    [ "$i" -eq 0 ] && EXPECTED_CALLS=2
     for t in $(seq 1 90); do
         N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}
         [ "$N" -ge "$EXPECTED_CALLS" ] && break
@@ -277,61 +284,115 @@ REOF
         log "  Node $i ready ($N/$EXPECTED_CALLS calls)"
     fi
 
-    sleep 2
-done
-
-# ---------- Phase 5: Monitor ----------
-echo ""
-echo "[5/5] Simulation running!"
-echo ""
-echo "  Config: $CONFIG_ACCOUNT"
-echo "  Logs:   $STATE_DIR/node*.log"
-echo ""
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    echo "  Node $i: PID ${INSTANCE_PIDS[$i]}, port $((BASE_TCP_PORT + i)), leaf ${LEAF_INDICES[$i]}"
-done
-echo ""
-echo "  Waiting 15s for peer discovery + RLN sync..."
-sleep 15
-
-echo "  Sending test messages between nodes..."
-echo ""
-
-# Send messages from each node using sendTest
-# Each node sends 5 messages at 5s intervals
-MSG_COUNT=0
-for round in $(seq 1 10); do
-    SENDER=$((round % NUM_NODES))
-    SENDER_LOG="$STATE_DIR/node${SENDER}.log"
-    PAYLOAD="rln-relay-test-msg-${round}"
-
-    # Count sendTest results before
-    BEFORE=$(grep -c 'sendTest success' "$SENDER_LOG" 2>/dev/null || true)
-
-    # Use logoscore -c to send (won't work on running process)
-    # Instead, check if sendTest calls are in the log from initial -c calls
-    # Actually we need a different approach — the nodes are already running
-
-    # For now, monitor what's happening with RLN
-    SENDS=$(grep -c 'sendTest success\|Proof generated' "$SENDER_LOG" 2>/dev/null || true)
-    ROOTS_0=$(grep -c 'get_valid_roots.*result.*count' "$STATE_DIR/node0.log" 2>/dev/null || true)
-    ROOTS_1=$(grep -c 'get_valid_roots.*result.*count' "$STATE_DIR/node1.log" 2>/dev/null || true)
-    ROOTS_2=$(grep -c 'get_valid_roots.*result.*count' "$STATE_DIR/node2.log" 2>/dev/null || true)
-
-    TS=$(date '+%H:%M:%S')
-    echo "  [$TS] roots: node0=$ROOTS_0 node1=$ROOTS_1 node2=$ROOTS_2"
-
     sleep 5
 done
 
+# ---------- Phase 5: Wait for messages ----------
 echo ""
-echo "  === Summary ==="
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    ROOTS=$(grep -c 'ffi_get_valid_roots result' "$STATE_DIR/node${i}.log" 2>/dev/null || true)
-    PROOFS=$(grep -c 'get_merkle_proofs\|merkle_proof' "$STATE_DIR/node${i}.log" 2>/dev/null || true)
-    echo "  Node $i: root_fetches=$ROOTS proof_fetches=$PROOFS"
-done
+echo "[5/6] Waiting for messages (node 0 sends after 60s delay + 10 msgs at 5s intervals)..."
 echo ""
-echo "  Press Ctrl+C to stop."
 
-wait
+# Total wait: 60s peer discovery + 50s sending + 20s buffer = 130s
+# Poll every 10s with progress
+for tick in $(seq 1 13); do
+    sleep 10
+    TS=$(date '+%H:%M:%S')
+    PROOFS=$(grep -c 'Proof generated successfully' "$STATE_DIR/node0.log" 2>/dev/null || true)
+    PUBLISHED=$(grep -c 'Published message to peers' "$STATE_DIR/node0.log" 2>/dev/null || true)
+    VALIDATED=0
+    for i in 1 2; do
+        V=$(grep -c 'message validity is verified' "$STATE_DIR/node${i}.log" 2>/dev/null || true)
+        VALIDATED=$((VALIDATED + V))
+    done
+    echo "  [$TS] proofs_generated=$PROOFS published=$PUBLISHED validated_by_receivers=$VALIDATED"
+
+    # Early exit once all messages sent and at least some validated
+    [ "$PROOFS" -ge 10 ] && [ "$VALIDATED" -ge 1 ] && break
+done
+
+# ---------- Phase 6: Verify ----------
+echo ""
+echo "[6/6] Verification"
+echo ""
+
+PASS=0
+FAIL=0
+
+check() {
+    local desc="$1" actual="$2" op="$3" expected="$4"
+    case "$op" in
+        -ge) if [ "$actual" -ge "$expected" ]; then
+                echo "  PASS: $desc ($actual >= $expected)"
+                PASS=$((PASS + 1))
+             else
+                echo "  FAIL: $desc ($actual < $expected)"
+                FAIL=$((FAIL + 1))
+             fi ;;
+        -eq) if [ "$actual" -eq "$expected" ]; then
+                echo "  PASS: $desc ($actual == $expected)"
+                PASS=$((PASS + 1))
+             else
+                echo "  FAIL: $desc ($actual != $expected)"
+                FAIL=$((FAIL + 1))
+             fi ;;
+    esac
+}
+
+# --- Node 0: sender ---
+N0_PROOFS=$(grep -c 'Proof generated successfully' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_PUBLISHED=$(grep -c 'Published message to peers' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_PROPAGATED=$(grep -c 'message_propagated' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_RLN_FAIL=$(grep -c 'could not generate rln\|identity credentials not set\|no cached merkle proof' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_ROOTS=$(grep -c 'Polled valid roots\|Using cached roots' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_CREDS=$(grep -c 'Set RLN identity credentials from config' "$STATE_DIR/node0.log" 2>/dev/null || true)
+
+echo "  --- Node 0 (sender) ---"
+check "RLN identity credentials set" "$N0_CREDS" -ge 1
+check "RLN proofs generated (10 messages)" "$N0_PROOFS" -ge 10
+check "Messages published to gossipsub" "$N0_PUBLISHED" -ge 1
+check "No RLN proof generation failures" "$N0_RLN_FAIL" -eq 0
+check "Root fetching active" "$N0_ROOTS" -ge 1
+
+# --- Receivers: at least one of node 1/2 must receive + validate ---
+TOTAL_VALIDATED=0
+TOTAL_RECEIVED=0
+for i in 1 2; do
+    V=$(grep -c 'message validity is verified' "$STATE_DIR/node${i}.log" 2>/dev/null || true)
+    R=$(grep -c 'message_received' "$STATE_DIR/node${i}.log" 2>/dev/null || true)
+    TOTAL_VALIDATED=$((TOTAL_VALIDATED + V))
+    TOTAL_RECEIVED=$((TOTAL_RECEIVED + R))
+done
+
+echo ""
+echo "  --- Receivers (nodes 1+2 combined) ---"
+check "Messages received by at least one receiver" "$TOTAL_RECEIVED" -ge 1
+check "RLN proofs validated on receivers" "$TOTAL_VALIDATED" -ge 1
+
+# --- Per-receiver detail ---
+echo ""
+echo "  --- Per-node detail ---"
+for i in $(seq 0 $((NUM_NODES - 1))); do
+    LOG="$STATE_DIR/node${i}.log"
+    PROOFS=$(grep -c 'Proof generated successfully' "$LOG" 2>/dev/null || true)
+    PUBLISHED=$(grep -c 'Published message to peers' "$LOG" 2>/dev/null || true)
+    RECV=$(grep -c 'message_received' "$LOG" 2>/dev/null || true)
+    VALIDATED=$(grep -c 'message validity is verified' "$LOG" 2>/dev/null || true)
+    ROOTS=$(grep -c 'Polled valid roots\|Using cached roots' "$LOG" 2>/dev/null || true)
+    MESH=$(grep -c 'mesh balanced.*mesh=1' "$LOG" 2>/dev/null || true)
+    echo "  Node $i: proofs=$PROOFS published=$PUBLISHED recv=$RECV validated=$VALIDATED roots=$ROOTS mesh=$MESH"
+done
+
+# --- Result ---
+echo ""
+if [ "$FAIL" -eq 0 ]; then
+    echo "  =========================================="
+    echo "  ALL $PASS CHECKS PASSED"
+    echo "  =========================================="
+    EXIT_CODE=0
+else
+    echo "  =========================================="
+    echo "  $FAIL FAILED, $PASS passed"
+    echo "  =========================================="
+    EXIT_CODE=1
+fi
+echo ""

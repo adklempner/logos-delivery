@@ -1,5 +1,5 @@
 import
-  std/[options, sequtils],
+  std/[options, sequtils, strutils],
   chronicles,
   chronos,
   libp2p/peerid,
@@ -392,11 +392,39 @@ proc setupProtocols(
     except CatchableError:
       return err("failed to mount waku RLN relay protocol: " & getCurrentExceptionMsg())
 
-    # For logos-core mode: wire callbacks and start group sync
+    # For logos-core mode: wire callbacks, set credentials, and start group sync
     if rlnRelayConf.logosCore and not node.wakuRlnRelay.isNil:
       let gm = cast[LogosCoreGroupManager](node.wakuRlnRelay.groupManager)
       gm.setFetchLatestRoots(relay_rln_client.makeFetchLatestRoots())
       gm.setFetchMerkleProof(relay_rln_client.makeFetchMerkleProof())
+
+      # Set membership index (leaf index) for merkle proof fetching
+      if rlnRelayConf.credIndex.isSome:
+        gm.membershipIndex = some(MembershipIndex(rlnRelayConf.credIndex.get()))
+
+      # Set identity credentials from config if provided
+      if rlnRelayConf.identitySecretHash.len > 0:
+        var hashHex = rlnRelayConf.identitySecretHash
+        if hashHex.startsWith("0x") or hashHex.startsWith("0X"):
+          hashHex = hashHex[2 .. ^1]
+        if hashHex.len == 64:
+          var idSecretHash: seq[byte] = newSeq[byte](32)
+          for i in 0 ..< 32:
+            idSecretHash[i] = byte(parseHexInt(hashHex[i * 2 .. i * 2 + 1]))
+          let cred = IdentityCredential(
+            idTrapdoor: newSeq[byte](32),
+            idNullifier: newSeq[byte](32),
+            idSecretHash: idSecretHash,
+            idCommitment: newSeq[byte](32),
+          )
+          gm.idCredentials = some(cred)
+          gm.userMessageLimit = some(rlnRelayConf.userMessageLimit)
+          info "Set RLN identity credentials from config",
+            hashPrefix = hashHex[0 .. 7]
+        else:
+          warn "Invalid identitySecretHash length, expected 64 hex chars",
+            got = hashHex.len
+
       (await gm.startGroupSync()).isOkOr:
         return err("failed to start logos-core RLN group sync: " & $error)
 

@@ -175,11 +175,8 @@ method generateProof*(
   let user_message_limit = uint64ToField(gm.userMessageLimit.get())
   let message_id = uint64ToField(messageId)
 
-  # Reverse path elements (32-byte chunks) to match zerokit convention
-  var path_elements = newSeq[byte](0)
-  for i in 0 ..< proof.pathElements.len div 32:
-    let chunk = proof.pathElements[i * 32 .. (i + 1) * 32 - 1]
-    path_elements.add(chunk.reversed())
+  # Path elements are already in LE format from logos-core (LEZ stores as LE)
+  let path_elements = proof.pathElements
 
   let x = keccak.keccak256.digest(data)
   let extNullifier = generateExternalNullifier(epoch, rlnIdentifier).valueOr:

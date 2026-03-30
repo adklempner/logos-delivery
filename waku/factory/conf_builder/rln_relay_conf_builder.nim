@@ -10,6 +10,7 @@ logScope:
 type RlnRelayConfBuilder* = object
   enabled*: Option[bool]
   logosCore*: Option[bool]
+  identitySecretHash*: Option[string]
   chainId*: Option[UInt256]
   ethClientUrls*: Option[seq[string]]
   ethContractAddress*: Option[string]
@@ -28,6 +29,10 @@ proc withEnabled*(b: var RlnRelayConfBuilder, enabled: bool) =
 
 proc withLogosCore*(b: var RlnRelayConfBuilder, logosCore: bool) =
   b.logosCore = some(logosCore)
+
+proc withIdentitySecretHash*(b: var RlnRelayConfBuilder, hash: string) =
+  if hash.len > 0:
+    b.identitySecretHash = some(hash)
 
 proc withChainId*(b: var RlnRelayConfBuilder, chainId: uint | UInt256) =
   when chainId is uint:
@@ -95,6 +100,7 @@ proc build*(b: RlnRelayConfBuilder): Result[Option[RlnRelayConf], string] =
     some(
       RlnRelayConf(
         logosCore: isLogosCore,
+        identitySecretHash: b.identitySecretHash.get(""),
         chainId: b.chainId.get(UInt256.zero),
         credIndex: b.credIndex,
         creds: creds,

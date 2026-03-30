@@ -47,6 +47,7 @@ type RlnRelayConf* = object of RootObj
   # and then it can be set to `requiresInit`
   dynamic*: bool
   logosCore*: bool ## Use logos-core (LEZ) instead of Ethereum for group management
+  identitySecretHash*: string ## Hex-encoded identity secret hash for logos-core mode
   credIndex*: Option[uint]
   ethContractAddress*: string
   ethClientUrls*: seq[string]

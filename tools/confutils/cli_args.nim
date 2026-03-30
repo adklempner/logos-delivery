@@ -85,6 +85,12 @@ type WakuNodeConf* = object
     name: "rln-relay-logos-core"
   .}: bool
 
+  rlnRelayIdentitySecretHash* {.
+    desc: "Hex-encoded identity secret hash for RLN proof generation (logos-core mode)",
+    defaultValue: "",
+    name: "rln-relay-identity-secret-hash"
+  .}: string
+
   rlnRelayCredPath* {.
     desc: "The path for persisting rln-relay credential",
     defaultValue: "",
@@ -959,6 +965,7 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
 
   b.rlnRelayConf.withEnabled(n.rlnRelay)
   b.rlnRelayConf.withLogosCore(n.rlnRelayLogosCore)
+  b.rlnRelayConf.withIdentitySecretHash(n.rlnRelayIdentitySecretHash)
   if n.rlnRelayCredPath != "":
     b.rlnRelayConf.withCredPath(n.rlnRelayCredPath)
   if n.rlnRelayCredPassword != "":
