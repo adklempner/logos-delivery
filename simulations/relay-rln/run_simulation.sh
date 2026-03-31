@@ -90,8 +90,17 @@ else
     fi
     rm -rf "$RLN_PROJECT_DIR/lssa/rocksdb"
     log "  Building sequencer..."
-    (cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3) || die "sequencer build failed"
-    (cd "$RLN_PROJECT_DIR/lssa" && env RUST_LOG=info ./target/debug/sequencer_runner sequencer_runner/configs/debug) >/dev/null 2>&1 &
+    # Support both old (sequencer_runner) and new (sequencer_service) lssa layouts
+    if (cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_service 2>&1 | tail -3); then
+        SEQ_BIN="./target/debug/sequencer_service"
+        SEQ_CFG="sequencer/service/configs/debug/sequencer_config.json"
+    elif (cd "$RLN_PROJECT_DIR/lssa" && cargo build --features standalone -p sequencer_runner 2>&1 | tail -3); then
+        SEQ_BIN="./target/debug/sequencer_runner"
+        SEQ_CFG="sequencer_runner/configs/debug"
+    else
+        die "sequencer build failed"
+    fi
+    (cd "$RLN_PROJECT_DIR/lssa" && env RUST_LOG=info "$SEQ_BIN" "$SEQ_CFG") >/dev/null 2>&1 &
     SEQUENCER_PID=$!; OWN_SEQUENCER=1
     echo "  PID: $SEQUENCER_PID"
     for _ in $(seq 1 60); do nc -z 127.0.0.1 3040 2>/dev/null && break; sleep 1; done

@@ -1,0 +1,22 @@
+{
+  "clusterId": 42,
+  "numShardsInNetwork": 8,
+  "entryNodes": ["/ip4/127.0.0.1/tcp/60001/p2p/16Uiu2HAmPiEs2ozjjJF2iN2Pe2FYeMC9w4caRHKYdLdAfjgbWM6o"],
+  "maxMessageSize": "150 KiB",
+  "listenAddress": "127.0.0.1",
+  "tcpPort": 60003,
+  "discv5UdpPort": 9003,
+  "nodekey": "ed54db994682e857d77cd6fb81be697382dc43aa5cd78e16b0ec8098549f860e",
+  "relay": true,
+  "rlnRelay": true,
+  "rlnRelayLogosCore": true,
+  "rlnRelayIdentitySecretHash": "b76d42edd39fd9d2701a3eb770125f9769457fdcc5d9fa5a4ef85fbef526a91e",
+  "rlnRelayCredIndex": 2,
+  "rlnRelayUserMessageLimit": 100,
+  "rlnEpochSizeSec": 10,
+  "enableSpamProtection": false,
+  "peerExchange": false,
+  "rendezvous": false,
+  "colocationLimit": 0,
+  "logLevel": "TRACE"
+}
