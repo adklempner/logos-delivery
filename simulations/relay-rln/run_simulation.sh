@@ -177,12 +177,21 @@ else
         SEED=$(openssl rand -hex 32)
         log "  Member $((i+1))/$NUM_NODES: generating identity..."
 
-        # Generate identity via gifter
+        # Generate identity via gifter (run in background, wait for result, kill)
         GIFTER_LOG="$STATE_DIR/gifter_${i}.log"
         TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
             -c "$WALLET_CALL" \
             -c "liblogos_rln_module.generate_identity($SEED)" \
-            > "$GIFTER_LOG" 2>&1 || die "generate_identity failed for member $i"
+            </dev/null > "$GIFTER_LOG" 2>&1 &
+        GIFTER_PID=$!
+        # Wait for 2 method calls to complete (wallet.open + generate_identity)
+        for t in $(seq 1 60); do
+            N=$(grep -c '^Method call successful' "$GIFTER_LOG" 2>/dev/null || true)
+            [ "${N:-0}" -ge 2 ] && break
+            sleep 1
+        done
+        kill "$GIFTER_PID" 2>/dev/null; wait "$GIFTER_PID" 2>/dev/null || true
+        pkill -f 'logos_host' 2>/dev/null || true; sleep 1
 
         # Parse identity result from log
         IDENTITY_RESULT=$(grep 'Method call successful. Result:' "$GIFTER_LOG" | tail -1 | sed 's/.*Result: //')
@@ -194,12 +203,20 @@ else
 
         log "  Member $((i+1))/$NUM_NODES: registering with gifter..."
 
-        # Register via gifter
+        # Register via gifter (run in background, wait for result, kill)
         REGISTER_LOG="$STATE_DIR/register_${i}.log"
         TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
             -c "$WALLET_CALL" \
             -c "liblogos_rln_module.register_member($CONFIG_ACCOUNT,$GIFTER_ACCOUNT,$ID_COMMITMENT,100)" \
-            > "$REGISTER_LOG" 2>&1 || die "register_member failed for member $i"
+            </dev/null > "$REGISTER_LOG" 2>&1 &
+        GIFTER_PID=$!
+        for t in $(seq 1 120); do
+            N=$(grep -c '^Method call successful' "$REGISTER_LOG" 2>/dev/null || true)
+            [ "${N:-0}" -ge 2 ] && break
+            sleep 1
+        done
+        kill "$GIFTER_PID" 2>/dev/null; wait "$GIFTER_PID" 2>/dev/null || true
+        pkill -f 'logos_host' 2>/dev/null || true; sleep 1
 
         # Parse registration result
         REGISTER_RESULT=$(grep 'Method call successful. Result:' "$REGISTER_LOG" | tail -1 | sed 's/.*Result: //')
