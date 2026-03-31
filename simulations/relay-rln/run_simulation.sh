@@ -99,8 +99,8 @@ else
     log "  Ready."
 fi
 
-# ---------- Phase 2: Deploy + Register ----------
-echo "[2/6] Programs + members..."
+# ---------- Phase 2: Deploy programs ----------
+echo "[2/7] Deploying programs..."
 LEZ_RLN_DIR="$RLN_PROJECT_DIR/lez-rln"
 export NSSA_WALLET_HOME_DIR="$RLN_PROJECT_DIR/dev"
 export WALLET_CONFIG="$NSSA_WALLET_HOME_DIR/wallet_config.json"
@@ -108,50 +108,26 @@ export WALLET_STORAGE="$NSSA_WALLET_HOME_DIR/storage.json"
 
 TREE_MAIN_FILE="$STATE_DIR/tree_main_account"
 MANIFEST_FILE="$STATE_DIR/manifest.json"
+# TREE_ID constant from lez-rln (hex encoded)
+TREE_ID_HEX="000102030405060708090a0b0c0d0e0f1011121314151617"
+GIFTER_ACCOUNT_FILE="$HOME/.logos-lez-rln/payment_account_${TREE_ID_HEX}.txt"
 
 if [ -f "$TREE_MAIN_FILE" ] && [ -f "$MANIFEST_FILE" ] && [ "$FRESH" -eq 0 ]; then
     CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[0]['configAccount'])" 2>/dev/null)
     echo "  Reusing existing state (config: $CONFIG_ACCOUNT)"
+    SKIP_REGISTRATION=1
 else
     rm -f "$WALLET_CONFIG" "$WALLET_STORAGE"
     SETUP_OUTPUT=$(cd "$LEZ_RLN_DIR" && cargo run --bin run_setup 2>&1) || die "run_setup failed"
-    echo "$SETUP_OUTPUT" | tail -3
-
-    REGISTER_BIN="$LEZ_RLN_DIR/target/release/register_member"
-    (cd "$LEZ_RLN_DIR" && cargo build --release --bin register_member 2>&1 | tail -3)
-    log "  Registering $NUM_NODES members..."
-    REG_OUTPUT="$STATE_DIR/reg_output.txt"
-    (cd "$LEZ_RLN_DIR" && "$REGISTER_BIN" --count "$NUM_NODES" > "$REG_OUTPUT" 2>&1) || die "register_member failed"
-
-    echo "[" > "$MANIFEST_FILE"
-    MEMBER_IDX=0
-    while IFS= read -r line; do
-        case "$line" in
-            CONFIG_ACCOUNT=*) [ "$MEMBER_IDX" -gt 0 ] && echo "," >> "$MANIFEST_FILE"
-                CONFIG_ACCOUNT="${line#CONFIG_ACCOUNT=}"
-                echo -n "  {\"configAccount\": \"$CONFIG_ACCOUNT\"" >> "$MANIFEST_FILE" ;;
-            LEAF_INDEX=*) echo -n ", \"leafIndex\": ${line#LEAF_INDEX=}" >> "$MANIFEST_FILE" ;;
-            IDENTITY_SECRET_HASH=*) echo ", \"identitySecretHash\": \"${line#IDENTITY_SECRET_HASH=}\", \"peerId\": \"${PEER_IDS[$MEMBER_IDX]}\"}" >> "$MANIFEST_FILE"
-                echo "    Member $((MEMBER_IDX+1)): leaf=${line#IDENTITY_SECRET_HASH=}" | head -c 40; echo
-                MEMBER_IDX=$((MEMBER_IDX + 1)) ;;
-        esac
-    done < "$REG_OUTPUT"
-    echo "]" >> "$MANIFEST_FILE"
-    echo "$CONFIG_ACCOUNT" > "$TREE_MAIN_FILE"
-    log "  $MEMBER_IDX members registered. Config: $CONFIG_ACCOUNT"
+    echo "$SETUP_OUTPUT" | tail -4
+    # Extract config account from setup output
+    CONFIG_ACCOUNT=$(echo "$SETUP_OUTPUT" | grep -oE 'Config account:\s+\S+' | awk '{print $NF}' || true)
+    [ -z "$CONFIG_ACCOUNT" ] && die "Failed to parse config account from run_setup output"
+    SKIP_REGISTRATION=0
 fi
 
-# Parse manifest
-LEAF_INDICES=()
-ID_SECRET_HASHES=()
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    LEAF_INDICES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['leafIndex'])" 2>/dev/null))
-    ID_SECRET_HASHES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['identitySecretHash'])" 2>/dev/null))
-done
-CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[0]['configAccount'])" 2>/dev/null)
-
 # ---------- Phase 3: Check modules ----------
-echo "[3/6] Modules..."
+echo "[3/7] Modules..."
 LOGOSCORE="${LOGOSCORE:-$(nix build github:logos-co/logos-liblogos/7df6195 --override-input logos-cpp-sdk github:logos-co/logos-cpp-sdk/a4bd66c --no-link --print-out-paths)/bin/logoscore}"
 WALLET_MODULE_RESULT="$RLN_PROJECT_DIR/logos-rln-module/result-wallet"
 
@@ -163,8 +139,94 @@ for check in \
 done
 log "  All modules present."
 
-# ---------- Phase 4: Stage + Start nodes ----------
-echo "[4/6] Starting $NUM_NODES relay nodes..."
+# ---------- Phase 4: Register members via gifter ----------
+echo "[4/7] Registering members via gifter service..."
+
+if [ "${SKIP_REGISTRATION:-0}" -eq 1 ]; then
+    echo "  Reusing existing registrations"
+else
+    # Read gifter (payment) account
+    GIFTER_ACCOUNT=$(cat "$GIFTER_ACCOUNT_FILE" 2>/dev/null || true)
+    [ -z "$GIFTER_ACCOUNT" ] && die "Gifter account not found at $GIFTER_ACCOUNT_FILE"
+    log "  Gifter account: $GIFTER_ACCOUNT"
+
+    # Stage modules for gifter node
+    GIFTER_MDIR=$(mktemp -d)
+    MODULES_DIRS+=("$GIFTER_MDIR")
+
+    mkdir -p "$GIFTER_MDIR/liblogos_execution_zone_wallet_module"
+    cp -L "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/"
+    [ -f "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" ] && \
+      cp -L "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/"
+    echo "{\"name\":\"liblogos_execution_zone_wallet_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_execution_zone_wallet_module.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/manifest.json"
+
+    mkdir -p "$GIFTER_MDIR/liblogos_rln_module"
+    cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" "$GIFTER_MDIR/liblogos_rln_module/"
+    cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblez_rln_ffi.$EXT" "$GIFTER_MDIR/liblogos_rln_module/" 2>/dev/null || true
+    echo "{\"name\":\"liblogos_rln_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_rln_module.$EXT\"},\"dependencies\":[\"liblogos_execution_zone_wallet_module\"],\"capabilities\":[]}" > "$GIFTER_MDIR/liblogos_rln_module/manifest.json"
+
+    GIFTER_LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module"
+    WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
+
+    # Register each member via gifter
+    echo "[" > "$MANIFEST_FILE"
+    for i in $(seq 0 $((NUM_NODES - 1))); do
+        [ "$i" -gt 0 ] && echo "," >> "$MANIFEST_FILE"
+
+        # Generate random 32-byte seed
+        SEED=$(openssl rand -hex 32)
+        log "  Member $((i+1))/$NUM_NODES: generating identity..."
+
+        # Generate identity via gifter
+        GIFTER_LOG="$STATE_DIR/gifter_${i}.log"
+        TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
+            -c "$WALLET_CALL" \
+            -c "liblogos_rln_module.generate_identity($SEED)" \
+            > "$GIFTER_LOG" 2>&1 || die "generate_identity failed for member $i"
+
+        # Parse identity result from log
+        IDENTITY_RESULT=$(grep 'Method call successful. Result:' "$GIFTER_LOG" | tail -1 | sed 's/.*Result: //')
+        ID_COMMITMENT=$(echo "$IDENTITY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id_commitment'])" 2>/dev/null)
+        ID_SECRET_HASH=$(echo "$IDENTITY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id_secret_hash'])" 2>/dev/null)
+
+        [ -z "$ID_COMMITMENT" ] && die "Failed to parse id_commitment for member $i"
+        [ -z "$ID_SECRET_HASH" ] && die "Failed to parse id_secret_hash for member $i"
+
+        log "  Member $((i+1))/$NUM_NODES: registering with gifter..."
+
+        # Register via gifter
+        REGISTER_LOG="$STATE_DIR/register_${i}.log"
+        TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
+            -c "$WALLET_CALL" \
+            -c "liblogos_rln_module.register_member($CONFIG_ACCOUNT,$GIFTER_ACCOUNT,$ID_COMMITMENT,100)" \
+            > "$REGISTER_LOG" 2>&1 || die "register_member failed for member $i"
+
+        # Parse registration result
+        REGISTER_RESULT=$(grep 'Method call successful. Result:' "$REGISTER_LOG" | tail -1 | sed 's/.*Result: //')
+        LEAF_INDEX=$(echo "$REGISTER_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['leaf_index'])" 2>/dev/null)
+
+        [ -z "$LEAF_INDEX" ] && die "Failed to parse leaf_index for member $i"
+
+        echo -n "  {\"configAccount\": \"$CONFIG_ACCOUNT\", \"leafIndex\": $LEAF_INDEX, \"identitySecretHash\": \"$ID_SECRET_HASH\", \"peerId\": \"${PEER_IDS[$i]}\"}" >> "$MANIFEST_FILE"
+        log "  Member $((i+1)): leaf=$LEAF_INDEX"
+    done
+    echo "" >> "$MANIFEST_FILE"
+    echo "]" >> "$MANIFEST_FILE"
+    echo "$CONFIG_ACCOUNT" > "$TREE_MAIN_FILE"
+    log "  $NUM_NODES members registered via gifter. Config: $CONFIG_ACCOUNT"
+fi
+
+# Parse manifest
+LEAF_INDICES=()
+ID_SECRET_HASHES=()
+for i in $(seq 0 $((NUM_NODES - 1))); do
+    LEAF_INDICES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['leafIndex'])" 2>/dev/null))
+    ID_SECRET_HASHES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['identitySecretHash'])" 2>/dev/null))
+done
+CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[0]['configAccount'])" 2>/dev/null)
+
+# ---------- Phase 5: Stage + Start nodes ----------
+echo "[5/7] Starting $NUM_NODES relay nodes..."
 
 LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module,mix_simulation_module"
 WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
@@ -287,9 +349,9 @@ REOF
     sleep 5
 done
 
-# ---------- Phase 5: Wait for messages ----------
+# ---------- Phase 6: Wait for messages ----------
 echo ""
-echo "[5/6] Waiting for messages (node 0 sends after 60s delay + 10 msgs at 5s intervals)..."
+echo "[6/7] Waiting for messages (node 0 sends after 60s delay + 10 msgs at 5s intervals)..."
 echo ""
 
 # Total wait: 60s peer discovery + 50s sending + 20s buffer = 130s
@@ -310,9 +372,9 @@ for tick in $(seq 1 13); do
     [ "$PROOFS" -ge 10 ] && [ "$VALIDATED" -ge 1 ] && break
 done
 
-# ---------- Phase 6: Verify ----------
+# ---------- Phase 7: Verify ----------
 echo ""
-echo "[6/6] Verification"
+echo "[7/7] Verification"
 echo ""
 
 PASS=0
