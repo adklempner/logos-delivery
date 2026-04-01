@@ -167,6 +167,14 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
     ENTRY_NODES="[]"
     [ "$i" -gt 0 ] && ENTRY_NODES="[\"/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}\"]"
 
+    # Gifter config: node 0 is gifter, nodes 1+2 register through node 0
+    GIFTER_FIELDS=""
+    if [ "$i" -eq 0 ]; then
+        GIFTER_FIELDS="\"rlnRelayGifterService\": true, \"rlnRelayGifterWalletAccount\": \"$GIFTER_ACCOUNT\","
+    else
+        GIFTER_FIELDS="\"rlnRelayGifterNode\": \"/ip4/127.0.0.1/tcp/$BASE_TCP_PORT/p2p/${PEER_IDS[0]}\","
+    fi
+
     cat > "$NODE_CONFIG" <<EOF
 {
   "clusterId": 42,
@@ -180,6 +188,7 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
+  $GIFTER_FIELDS
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,
@@ -219,8 +228,8 @@ EOF
 
     log "  Starting node $i (port $TCP_PORT)..."
 
-    # Node 0: self-registers then uses mix_simulation_module for deferred message sending
-    # Nodes 1+: self-register via selfRegisterRln, receive + validate
+    # Node 0: gifter + sender via mix_simulation_module
+    # Nodes 1+2: auto-register via gifter protocol during createNode, then receive + validate
     if [ "$i" -eq 0 ]; then
         RUNNER_CONFIG="$STATE_DIR/runner0_config.json"
         cat > "$RUNNER_CONFIG" <<REOF
@@ -245,11 +254,11 @@ REOF
             -c "mix_simulation_module.start(@$RUNNER_CONFIG)" \
             </dev/null >"$LOG_FILE" 2>&1 &
     else
+        # Nodes 1+2: createNode auto-registers via gifter protocol (config has rlnRelayGifterNode)
         TMPDIR=/tmp "$LOGOSCORE" -m "$MDIR" -l "$LOAD_ORDER" \
             -c "$WALLET_CALL" \
             -c "delivery_module.createNode(@$NODE_CONFIG)" \
             -c "delivery_module.start()" \
-            -c "delivery_module.selfRegisterRln($CONFIG_ACCOUNT,$GIFTER_ACCOUNT,100)" \
             -c "delivery_module.subscribe($CONTENT_TOPIC)" \
             -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
             </dev/null >"$LOG_FILE" 2>&1 &
@@ -258,9 +267,10 @@ REOF
     echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
 
     # Wait for init
-    # Node 0: 2 calls (wallet.open + mix_simulation_module.start — it handles createNode/start/register/send internally)
-    # Other nodes: 6 calls (wallet + createNode + start + selfRegisterRln + subscribe + broadcast)
-    EXPECTED_CALLS=6
+    # Node 0: 2 calls (wallet.open + mix_simulation_module.start)
+    # Other nodes: 5 calls (wallet + createNode + start + subscribe + broadcast)
+    # Note: gifter registration happens inside createNode (during setupProtocols)
+    EXPECTED_CALLS=5
     [ "$i" -eq 0 ] && EXPECTED_CALLS=2
     for t in $(seq 1 120); do
         N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}

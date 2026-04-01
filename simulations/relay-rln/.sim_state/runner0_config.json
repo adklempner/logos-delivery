@@ -11,6 +11,7 @@
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
+  "rlnRelayGifterService": true, "rlnRelayGifterWalletAccount": "5f1oMh1hkXQKf9NPDTo9HSz2D6Sx18PWnrMrekG4DGxJ",
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,

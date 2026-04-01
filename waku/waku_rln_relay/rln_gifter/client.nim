@@ -40,9 +40,19 @@ proc requestMembership*(
     requestId = request.requestId,
     idCommitment = idCommitment[0 .. min(15, idCommitment.len - 1)] & "..."
 
-  let connection =
-    (await wc.peerManager.dialPeer(peer, WakuRlnGifterCodec)).valueOr:
-      return err("failed to dial gifter peer")
+  # Retry dial with backoff (gifter node may still be initializing)
+  var connection: Connection
+  var dialAttempts = 0
+  while true:
+    let connOpt = await wc.peerManager.dialPeer(peer, WakuRlnGifterCodec)
+    if connOpt.isSome:
+      connection = connOpt.get()
+      break
+    dialAttempts += 1
+    if dialAttempts >= 5:
+      return err("failed to dial gifter peer after " & $dialAttempts & " attempts")
+    warn "gifter dial failed, retrying", attempt = dialAttempts
+    await sleepAsync(seconds(5))
 
   defer:
     await connection.closeWithEOF()
