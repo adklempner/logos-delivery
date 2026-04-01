@@ -10,8 +10,6 @@
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
-  "rlnRelayIdentitySecretHash": "2291b3d6422df19d2553738a552f98037549d31cfd3fe907c04ff3830f7c2828",
-  "rlnRelayCredIndex": 0,
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,

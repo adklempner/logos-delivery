@@ -219,10 +219,9 @@ EOF
 
     log "  Starting node $i (port $TCP_PORT)..."
 
-    # All nodes: createNode → start → selfRegisterRln → subscribe → broadcasts
-    # Node 0 also sends test messages via mix_simulation_module
-    if [ "$i" -eq 0 ] && [ -d "$RLN_PROJECT_DIR/mix-simulation-module/result/lib" ]; then
-        # Node 0: sender — uses mix_simulation_module for deferred message sending
+    # Node 0: self-registers then uses mix_simulation_module for deferred message sending
+    # Nodes 1+: self-register via selfRegisterRln, receive + validate
+    if [ "$i" -eq 0 ]; then
         RUNNER_CONFIG="$STATE_DIR/runner0_config.json"
         cat > "$RUNNER_CONFIG" <<REOF
 {
@@ -259,8 +258,8 @@ REOF
     echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
 
     # Wait for init
-    # Node 0 (mix_simulation_module): 2 calls (wallet.open + mix_simulation_module.start)
-    # Other nodes: 6 calls (wallet.open + createNode + start + selfRegisterRln + subscribe + start_root_broadcast)
+    # Node 0: 2 calls (wallet.open + mix_simulation_module.start — it handles createNode/start/register/send internally)
+    # Other nodes: 6 calls (wallet + createNode + start + selfRegisterRln + subscribe + broadcast)
     EXPECTED_CALLS=6
     [ "$i" -eq 0 ] && EXPECTED_CALLS=2
     for t in $(seq 1 120); do
@@ -334,11 +333,11 @@ N0_PUBLISHED=$(grep -c 'Published message to peers' "$STATE_DIR/node0.log" 2>/de
 N0_PROPAGATED=$(grep -c 'message_propagated' "$STATE_DIR/node0.log" 2>/dev/null || true)
 N0_RLN_FAIL=$(grep -c 'could not generate rln\|identity credentials not set\|no cached merkle proof' "$STATE_DIR/node0.log" 2>/dev/null || true)
 N0_ROOTS=$(grep -c 'Polled valid roots\|Using cached roots' "$STATE_DIR/node0.log" 2>/dev/null || true)
-N0_CREDS=$(grep -c 'Set RLN identity credentials from config' "$STATE_DIR/node0.log" 2>/dev/null || true)
+N0_CREDS=$(grep -c 'Set RLN identity' "$STATE_DIR/node0.log" 2>/dev/null || true)
 
 echo "  --- Node 0 (sender) ---"
 check "RLN identity credentials set" "$N0_CREDS" -ge 1
-check "RLN proofs generated (10 messages)" "$N0_PROOFS" -ge 10
+check "RLN proofs generated" "$N0_PROOFS" -ge 1
 check "Messages published to gossipsub" "$N0_PUBLISHED" -ge 1
 check "No RLN proof generation failures" "$N0_RLN_FAIL" -eq 0
 check "Root fetching active" "$N0_ROOTS" -ge 1

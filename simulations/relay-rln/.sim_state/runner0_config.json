@@ -11,8 +11,6 @@
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
-  "rlnRelayIdentitySecretHash": "2291b3d6422df19d2553738a552f98037549d31cfd3fe907c04ff3830f7c2828",
-  "rlnRelayCredIndex": 0,
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,
@@ -24,7 +22,8 @@
   "contentTopic": "/relay-rln-test/1/test/proto",
   "rln": {
     "configAccountId": "G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR",
-    "leafIndex": 0
+    "walletAccountId": "5f1oMh1hkXQKf9NPDTo9HSz2D6Sx18PWnrMrekG4DGxJ",
+    "rateLimit": 100
   },
   "simulation": {
     "peerDiscoveryDelayMs": 60000,
