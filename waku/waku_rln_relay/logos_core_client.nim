@@ -6,7 +6,7 @@
 ## The C++ delivery module registers an RLN fetcher at startup.
 ## Event-push caching provides fast access to roots/proofs.
 
-import std/[json, strutils, locks, algorithm]
+import std/[json, strutils, locks, algorithm, options]
 import chronos
 import results
 import chronicles
@@ -30,6 +30,8 @@ var
   rlnFetcherData: pointer
   rlnConfigAccountId: string
   rlnLeafIndex: int = -1
+  rlnIdentitySecretHash: string
+  rlnGroupManager: pointer  # Stores ref to LogosCoreGroupManager for deferred identity setting
   cachedRootsJson: string
   cachedProofJson: string
 
@@ -47,6 +49,48 @@ proc setRlnConfig*(configAccountId: string, leafIndex: int) {.gcsafe.} =
     rlnFetcherLock.acquire()
     rlnConfigAccountId = configAccountId
     rlnLeafIndex = leafIndex
+    rlnFetcherLock.release()
+
+proc setGroupManagerRef*(gm: pointer) {.gcsafe.} =
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    rlnGroupManager = gm
+    rlnFetcherLock.release()
+
+proc setRlnIdentity*(idSecretHashHex: string) {.gcsafe.} =
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    rlnIdentitySecretHash = idSecretHashHex
+    let gm = rlnGroupManager
+    let leafIdx = rlnLeafIndex
+    rlnFetcherLock.release()
+
+    trace "Set RLN identity secret hash", hashPrefix = idSecretHashHex[0 .. min(7, idSecretHashHex.len - 1)]
+
+    # Set credentials on the group manager if available
+    if not gm.isNil and idSecretHashHex.len == 64:
+      var idSecretHash: seq[byte] = newSeq[byte](32)
+      for i in 0 ..< 32:
+        try:
+          idSecretHash[i] = byte(parseHexInt(idSecretHashHex[i * 2 .. i * 2 + 1]))
+        except ValueError:
+          return
+      let cred = IdentityCredential(
+        idTrapdoor: newSeq[byte](32),
+        idNullifier: newSeq[byte](32),
+        idSecretHash: idSecretHash,
+        idCommitment: newSeq[byte](32),
+      )
+      let gmRef = cast[LogosCoreGroupManager](gm)
+      gmRef.idCredentials = some(cred)
+      if leafIdx >= 0:
+        gmRef.membershipIndex = some(MembershipIndex(leafIdx))
+      info "Set RLN identity on group manager from deferred call"
+
+proc getRlnIdentity*(): string {.gcsafe.} =
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    result = rlnIdentitySecretHash
     rlnFetcherLock.release()
 
 proc getRlnConfig*(): (string, int) {.gcsafe.} =

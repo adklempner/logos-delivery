@@ -60,6 +60,13 @@ proc logosdelivery_set_rln_config(
   relay_rln_client.setRlnConfig($configAccountId, leafIndex.int)
   return RET_OK
 
+proc logosdelivery_set_rln_identity(
+    ctx: ptr FFIContext[Waku], idSecretHashHex: cstring
+) {.dynlib, exportc, cdecl.} =
+  if idSecretHashHex.isNil:
+    return
+  relay_rln_client.setRlnIdentity($idSecretHashHex)
+
 proc logosdelivery_push_roots(
     ctx: ptr FFIContext[Waku], rootsJson: cstring
 ) {.dynlib, exportc, cdecl.} =

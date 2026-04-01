@@ -1,0 +1,35 @@
+{
+  "delivery": {
+  "clusterId": 42,
+  "numShardsInNetwork": 8,
+  "entryNodes": [],
+  "maxMessageSize": "150 KiB",
+  "listenAddress": "127.0.0.1",
+  "tcpPort": 60001,
+  "discv5UdpPort": 9001,
+  "nodekey": "f98e3fba96c32e8d1967d460f1b79457380e1a895f7971cecc8528abe733781a",
+  "relay": true,
+  "rlnRelay": true,
+  "rlnRelayLogosCore": true,
+  "rlnRelayIdentitySecretHash": "2291b3d6422df19d2553738a552f98037549d31cfd3fe907c04ff3830f7c2828",
+  "rlnRelayCredIndex": 0,
+  "rlnRelayUserMessageLimit": 100,
+  "rlnEpochSizeSec": 10,
+  "enableSpamProtection": false,
+  "peerExchange": false,
+  "rendezvous": false,
+  "colocationLimit": 0,
+  "logLevel": "TRACE"
+},
+  "contentTopic": "/relay-rln-test/1/test/proto",
+  "rln": {
+    "configAccountId": "G2kfKPq8U1fuZTm1nQwGAJBMGNyqmnR2P4ggTbbyr3SR",
+    "leafIndex": 0
+  },
+  "simulation": {
+    "peerDiscoveryDelayMs": 60000,
+    "messageCount": 10,
+    "messageDelayMs": 5000,
+    "payload": "relay-rln-test"
+  }
+}

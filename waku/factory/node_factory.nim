@@ -397,6 +397,7 @@ proc setupProtocols(
       let gm = cast[LogosCoreGroupManager](node.wakuRlnRelay.groupManager)
       gm.setFetchLatestRoots(relay_rln_client.makeFetchLatestRoots())
       gm.setFetchMerkleProof(relay_rln_client.makeFetchMerkleProof())
+      relay_rln_client.setGroupManagerRef(cast[pointer](gm))
 
       # Set membership index (leaf index) for merkle proof fetching
       if rlnRelayConf.credIndex.isSome:

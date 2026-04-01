@@ -122,6 +122,10 @@ extern "C"
                                     void *userData,
                                     const char *paramsJson);
 
+  // Set the RLN identity secret hash (called after self-registration).
+  // Sets credentials on the group manager for proof generation.
+  void logosdelivery_set_rln_identity(void *ctx, const char *idSecretHashHex);
+
 #ifdef __cplusplus
 }
 #endif
