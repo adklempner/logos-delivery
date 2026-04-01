@@ -148,111 +148,12 @@ for check in \
 done
 log "  All modules present."
 
-# ---------- Phase 4: Register members via gifter ----------
-echo "[4/7] Registering members via gifter service..."
+# Read gifter (payment) account
+GIFTER_ACCOUNT=$(cat "$GIFTER_ACCOUNT_FILE" 2>/dev/null || true)
+[ -z "$GIFTER_ACCOUNT" ] && die "Gifter account not found at $GIFTER_ACCOUNT_FILE"
 
-if [ "${SKIP_REGISTRATION:-0}" -eq 1 ]; then
-    echo "  Reusing existing registrations"
-else
-    # Read gifter (payment) account
-    GIFTER_ACCOUNT=$(cat "$GIFTER_ACCOUNT_FILE" 2>/dev/null || true)
-    [ -z "$GIFTER_ACCOUNT" ] && die "Gifter account not found at $GIFTER_ACCOUNT_FILE"
-    log "  Gifter account: $GIFTER_ACCOUNT"
-
-    # Stage modules for gifter node
-    GIFTER_MDIR=$(mktemp -d)
-    MODULES_DIRS+=("$GIFTER_MDIR")
-
-    mkdir -p "$GIFTER_MDIR/liblogos_execution_zone_wallet_module"
-    cp -L "$WALLET_MODULE_RESULT/lib/liblogos_execution_zone_wallet_module.$EXT" "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/"
-    [ -f "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" ] && \
-      cp -L "$WALLET_MODULE_RESULT/lib/libwallet_ffi.$EXT" "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/"
-    echo "{\"name\":\"liblogos_execution_zone_wallet_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_execution_zone_wallet_module.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$GIFTER_MDIR/liblogos_execution_zone_wallet_module/manifest.json"
-
-    mkdir -p "$GIFTER_MDIR/liblogos_rln_module"
-    cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblogos_rln_module.$EXT" "$GIFTER_MDIR/liblogos_rln_module/"
-    cp -L "$RLN_PROJECT_DIR/logos-rln-module/result-rln/lib/liblez_rln_ffi.$EXT" "$GIFTER_MDIR/liblogos_rln_module/" 2>/dev/null || true
-    echo "{\"name\":\"liblogos_rln_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"liblogos_rln_module.$EXT\"},\"dependencies\":[\"liblogos_execution_zone_wallet_module\"],\"capabilities\":[]}" > "$GIFTER_MDIR/liblogos_rln_module/manifest.json"
-
-    GIFTER_LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module"
-    WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
-
-    # Register each member via gifter
-    echo "[" > "$MANIFEST_FILE"
-    for i in $(seq 0 $((NUM_NODES - 1))); do
-        [ "$i" -gt 0 ] && echo "," >> "$MANIFEST_FILE"
-
-        # Generate random 32-byte seed
-        SEED=$(openssl rand -hex 32)
-        log "  Member $((i+1))/$NUM_NODES: generating identity..."
-
-        # Generate identity via gifter (run in background, wait for result, kill)
-        GIFTER_LOG="$STATE_DIR/gifter_${i}.log"
-        TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
-            -c "$WALLET_CALL" \
-            -c "liblogos_rln_module.generate_identity($SEED)" \
-            </dev/null > "$GIFTER_LOG" 2>&1 &
-        GIFTER_PID=$!
-        # Wait for 2 method calls to complete (wallet.open + generate_identity)
-        for t in $(seq 1 60); do
-            N=$(grep -c '^Method call successful' "$GIFTER_LOG" 2>/dev/null || true)
-            [ "${N:-0}" -ge 2 ] && break
-            sleep 1
-        done
-        kill "$GIFTER_PID" 2>/dev/null; wait "$GIFTER_PID" 2>/dev/null || true
-        pkill -f 'logos_host' 2>/dev/null || true; sleep 1
-
-        # Parse identity result from log
-        IDENTITY_RESULT=$(grep 'Method call successful. Result:' "$GIFTER_LOG" | tail -1 | sed 's/.*Result: //')
-        ID_COMMITMENT=$(echo "$IDENTITY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id_commitment'])" 2>/dev/null)
-        ID_SECRET_HASH=$(echo "$IDENTITY_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['id_secret_hash'])" 2>/dev/null)
-
-        [ -z "$ID_COMMITMENT" ] && die "Failed to parse id_commitment for member $i"
-        [ -z "$ID_SECRET_HASH" ] && die "Failed to parse id_secret_hash for member $i"
-
-        log "  Member $((i+1))/$NUM_NODES: registering with gifter..."
-
-        # Register via gifter (run in background, wait for result, kill)
-        REGISTER_LOG="$STATE_DIR/register_${i}.log"
-        TMPDIR=/tmp "$LOGOSCORE" -m "$GIFTER_MDIR" -l "$GIFTER_LOAD_ORDER" \
-            -c "$WALLET_CALL" \
-            -c "liblogos_rln_module.register_member($CONFIG_ACCOUNT,$GIFTER_ACCOUNT,$ID_COMMITMENT,100)" \
-            </dev/null > "$REGISTER_LOG" 2>&1 &
-        GIFTER_PID=$!
-        for t in $(seq 1 120); do
-            N=$(grep -c '^Method call successful' "$REGISTER_LOG" 2>/dev/null || true)
-            [ "${N:-0}" -ge 2 ] && break
-            sleep 1
-        done
-        kill "$GIFTER_PID" 2>/dev/null; wait "$GIFTER_PID" 2>/dev/null || true
-        pkill -f 'logos_host' 2>/dev/null || true; sleep 1
-
-        # Parse registration result
-        REGISTER_RESULT=$(grep 'Method call successful. Result:' "$REGISTER_LOG" | tail -1 | sed 's/.*Result: //')
-        LEAF_INDEX=$(echo "$REGISTER_RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['leaf_index'])" 2>/dev/null)
-
-        [ -z "$LEAF_INDEX" ] && die "Failed to parse leaf_index for member $i"
-
-        echo -n "  {\"configAccount\": \"$CONFIG_ACCOUNT\", \"leafIndex\": $LEAF_INDEX, \"identitySecretHash\": \"$ID_SECRET_HASH\", \"peerId\": \"${PEER_IDS[$i]}\"}" >> "$MANIFEST_FILE"
-        log "  Member $((i+1)): leaf=$LEAF_INDEX"
-    done
-    echo "" >> "$MANIFEST_FILE"
-    echo "]" >> "$MANIFEST_FILE"
-    echo "$CONFIG_ACCOUNT" > "$TREE_MAIN_FILE"
-    log "  $NUM_NODES members registered via gifter. Config: $CONFIG_ACCOUNT"
-fi
-
-# Parse manifest
-LEAF_INDICES=()
-ID_SECRET_HASHES=()
-for i in $(seq 0 $((NUM_NODES - 1))); do
-    LEAF_INDICES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['leafIndex'])" 2>/dev/null))
-    ID_SECRET_HASHES+=($(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[$i]['identitySecretHash'])" 2>/dev/null))
-done
-CONFIG_ACCOUNT=$(python3 -c "import json; print(json.load(open('$MANIFEST_FILE'))[0]['configAccount'])" 2>/dev/null)
-
-# ---------- Phase 5: Stage + Start nodes ----------
-echo "[5/7] Starting $NUM_NODES relay nodes..."
+# ---------- Phase 4: Stage + Start nodes (each self-registers) ----------
+echo "[4/6] Starting $NUM_NODES relay nodes (each self-registers via RLN gifter)..."
 
 LOAD_ORDER="liblogos_execution_zone_wallet_module,liblogos_rln_module,delivery_module,mix_simulation_module"
 WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_STORAGE)"
@@ -260,8 +161,6 @@ WALLET_CALL="liblogos_execution_zone_wallet_module.open($WALLET_CONFIG,$WALLET_S
 for i in $(seq 0 $((NUM_NODES - 1))); do
     TCP_PORT=$((BASE_TCP_PORT + i))
     DISC_PORT=$((BASE_DISC_PORT + i))
-    LEAF_INDEX="${LEAF_INDICES[$i]}"
-    ID_SECRET_HASH="${ID_SECRET_HASHES[$i]}"
     NODE_CONFIG="$STATE_DIR/node${i}_config.json"
     LOG_FILE="$STATE_DIR/node${i}.log"
 
@@ -281,8 +180,6 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
   "relay": true,
   "rlnRelay": true,
   "rlnRelayLogosCore": true,
-  "rlnRelayIdentitySecretHash": "$ID_SECRET_HASH",
-  "rlnRelayCredIndex": $LEAF_INDEX,
   "rlnRelayUserMessageLimit": 100,
   "rlnEpochSizeSec": 10,
   "enableSpamProtection": false,
@@ -320,9 +217,12 @@ EOF
     for pq in "$RLN_PROJECT_DIR"/logos-delivery-module/result/lib/libpq*; do [ -f "$pq" ] && cp -L "$pq" "$MDIR/delivery_module/"; done
     echo "{\"name\":\"delivery_module\",\"version\":\"1.0.0\",\"type\":\"core\",\"main\":{\"$PLATFORM\":\"delivery_module_plugin.$EXT\"},\"dependencies\":[],\"capabilities\":[]}" > "$MDIR/delivery_module/manifest.json"
 
-    log "  Starting node $i (port $TCP_PORT, leaf $LEAF_INDEX)..."
+    log "  Starting node $i (port $TCP_PORT)..."
 
-    if [ "$i" -eq 0 ]; then
+    # All nodes: createNode → start → selfRegisterRln → subscribe → broadcasts
+    # Node 0 also sends test messages via mix_simulation_module
+    if [ "$i" -eq 0 ] && [ -d "$RLN_PROJECT_DIR/mix-simulation-module/result/lib" ]; then
+        # Node 0: sender — uses mix_simulation_module for deferred message sending
         RUNNER_CONFIG="$STATE_DIR/runner0_config.json"
         cat > "$RUNNER_CONFIG" <<REOF
 {
@@ -330,7 +230,8 @@ EOF
   "contentTopic": "$CONTENT_TOPIC",
   "rln": {
     "configAccountId": "$CONFIG_ACCOUNT",
-    "leafIndex": $LEAF_INDEX
+    "walletAccountId": "$GIFTER_ACCOUNT",
+    "rateLimit": 100
   },
   "simulation": {
     "peerDiscoveryDelayMs": 60000,
@@ -349,19 +250,20 @@ REOF
             -c "$WALLET_CALL" \
             -c "delivery_module.createNode(@$NODE_CONFIG)" \
             -c "delivery_module.start()" \
+            -c "delivery_module.selfRegisterRln($CONFIG_ACCOUNT,$GIFTER_ACCOUNT,100)" \
             -c "delivery_module.subscribe($CONTENT_TOPIC)" \
-            -c "delivery_module.setRlnConfig($CONFIG_ACCOUNT,$LEAF_INDEX)" \
             -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
-            -c "liblogos_rln_module.start_merkle_proof_broadcast($CONFIG_ACCOUNT,$LEAF_INDEX)" \
             </dev/null >"$LOG_FILE" 2>&1 &
     fi
     INSTANCE_PIDS+=($!)
     echo "  Node $i PID: ${INSTANCE_PIDS[$i]}"
 
     # Wait for init
-    EXPECTED_CALLS=7
+    # Node 0 (mix_simulation_module): 2 calls (wallet.open + mix_simulation_module.start)
+    # Other nodes: 6 calls (wallet.open + createNode + start + selfRegisterRln + subscribe + start_root_broadcast)
+    EXPECTED_CALLS=6
     [ "$i" -eq 0 ] && EXPECTED_CALLS=2
-    for t in $(seq 1 90); do
+    for t in $(seq 1 120); do
         N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}
         [ "$N" -ge "$EXPECTED_CALLS" ] && break
         sleep 1
@@ -377,7 +279,7 @@ done
 
 # ---------- Phase 6: Wait for messages ----------
 echo ""
-echo "[6/7] Waiting for messages (node 0 sends after 60s delay + 10 msgs at 5s intervals)..."
+echo "[5/6] Waiting for messages (node 0 sends after 60s delay + 10 msgs at 5s intervals)..."
 echo ""
 
 # Total wait: 60s peer discovery + 50s sending + 20s buffer = 130s
@@ -400,7 +302,7 @@ done
 
 # ---------- Phase 7: Verify ----------
 echo ""
-echo "[7/7] Verification"
+echo "[6/6] Verification"
 echo ""
 
 PASS=0
