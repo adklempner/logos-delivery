@@ -48,6 +48,9 @@ type RlnRelayConf* = object of RootObj
   dynamic*: bool
   logosCore*: bool ## Use logos-core (LEZ) instead of Ethereum for group management
   identitySecretHash*: string ## Hex-encoded identity secret hash for logos-core mode
+  gifterService*: bool ## Whether this node serves as an RLN gifter
+  gifterWalletAccount*: string ## Wallet account ID for gifter to fund registrations
+  gifterNode*: string ## Multiaddr of a gifter peer (empty = no auto-registration)
   credIndex*: Option[uint]
   ethContractAddress*: string
   ethClientUrls*: seq[string]

@@ -11,3 +11,4 @@ const
   WakuPeerExchangeCodec* = "/vac/waku/peer-exchange/2.0.0-alpha1"
   WakuLegacyStoreCodec* = "/vac/waku/store/2.0.0-beta4"
   WakuRendezVousCodec* = "/vac/waku/rendezvous/1.0.0"
+  WakuRlnGifterCodec* = "/logos/rln-gifter/1.0.0"

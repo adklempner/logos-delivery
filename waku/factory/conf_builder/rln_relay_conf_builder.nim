@@ -11,6 +11,9 @@ type RlnRelayConfBuilder* = object
   enabled*: Option[bool]
   logosCore*: Option[bool]
   identitySecretHash*: Option[string]
+  gifterService*: Option[bool]
+  gifterWalletAccount*: Option[string]
+  gifterNode*: Option[string]
   chainId*: Option[UInt256]
   ethClientUrls*: Option[seq[string]]
   ethContractAddress*: Option[string]
@@ -33,6 +36,17 @@ proc withLogosCore*(b: var RlnRelayConfBuilder, logosCore: bool) =
 proc withIdentitySecretHash*(b: var RlnRelayConfBuilder, hash: string) =
   if hash.len > 0:
     b.identitySecretHash = some(hash)
+
+proc withGifterService*(b: var RlnRelayConfBuilder, gifterService: bool) =
+  b.gifterService = some(gifterService)
+
+proc withGifterWalletAccount*(b: var RlnRelayConfBuilder, account: string) =
+  if account.len > 0:
+    b.gifterWalletAccount = some(account)
+
+proc withGifterNode*(b: var RlnRelayConfBuilder, gifterNode: string) =
+  if gifterNode.len > 0:
+    b.gifterNode = some(gifterNode)
 
 proc withChainId*(b: var RlnRelayConfBuilder, chainId: uint | UInt256) =
   when chainId is uint:
@@ -101,6 +115,9 @@ proc build*(b: RlnRelayConfBuilder): Result[Option[RlnRelayConf], string] =
       RlnRelayConf(
         logosCore: isLogosCore,
         identitySecretHash: b.identitySecretHash.get(""),
+        gifterService: b.gifterService.get(false),
+        gifterWalletAccount: b.gifterWalletAccount.get(""),
+        gifterNode: b.gifterNode.get(""),
         chainId: b.chainId.get(UInt256.zero),
         credIndex: b.credIndex,
         creds: creds,

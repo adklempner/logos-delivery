@@ -1,5 +1,5 @@
 import
-  std/[options, sequtils, strutils],
+  std/[options, sequtils, strutils, json],
   chronicles,
   chronos,
   libp2p/peerid,
@@ -22,6 +22,9 @@ import
   ../waku_rln_relay,
   ../waku_rln_relay/logos_core_client as relay_rln_client,
   ../waku_rln_relay/group_manager/logos_core/group_manager as logos_core_gm,
+  ../waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
+  ../waku_rln_relay/rln_gifter/client as rln_gifter_client,
+  ../waku_rln_relay/rln/wrappers as rln_wrappers,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -428,6 +431,77 @@ proc setupProtocols(
 
       (await gm.startGroupSync()).isOkOr:
         return err("failed to start logos-core RLN group sync: " & $error)
+
+      # Mount RLN gifter server if configured
+      if rlnRelayConf.gifterService:
+        let walletAccount = rlnRelayConf.gifterWalletAccount
+        let registerHandler: rln_gifter_protocol.RegisterMemberHandler =
+          proc(
+              idCommitment: string, rateLimit: uint64
+          ): Future[
+              Result[tuple[leafIndex: uint64, configAccountId: string], string]
+          ] {.async, gcsafe.} =
+            let (configAccount, _) = relay_rln_client.getRlnConfig()
+            if configAccount.len == 0:
+              return err("RLN config not set on gifter node")
+            let holdingAccount = if walletAccount.len > 0: walletAccount else: configAccount
+            let params =
+              "{\"configAccountId\":\"" & configAccount &
+              "\",\"userHoldingAccountId\":\"" & holdingAccount &
+              "\",\"idCommitment\":\"" & idCommitment &
+              "\",\"rateLimit\":" & $rateLimit & "}"
+            let regResult = relay_rln_client.callRlnFetcher("register_member", params)
+            if regResult.isErr:
+              return err(regResult.error)
+            try:
+              let parsed = parseJson(regResult.get())
+              let leafIndex = parsed["leaf_index"].getInt().uint64
+              return ok((leafIndex: leafIndex, configAccountId: configAccount))
+            except CatchableError:
+              return err("failed to parse register_member result")
+
+        let gifter = rln_gifter_protocol.WakuRlnGifter.new(
+          node.peerManager, node.rng, registerHandler
+        )
+        node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
+        info "RLN gifter service mounted"
+
+      # Mount RLN gifter client and auto-register if gifterNode configured
+      if rlnRelayConf.gifterNode.len > 0:
+        let gifterClient = rln_gifter_client.WakuRlnGifterClient.new(
+          node.peerManager, node.rng
+        )
+        let gifterPeer = parsePeerInfo(rlnRelayConf.gifterNode).valueOr:
+          return err("failed to parse gifter peer: " & error)
+        node.peerManager.addServicePeer(gifterPeer, WakuRlnGifterCodec)
+
+        # Generate identity locally
+        let idCred = rln_wrappers.membershipKeyGen().valueOr:
+          return err("failed to generate RLN identity: " & $error)
+        let idCommitmentHex = block:
+          var hex = ""
+          for b in idCred.idCommitment:
+            hex.add(toHex(int(b), 2))
+          hex
+
+        info "Generated RLN identity, requesting membership from gifter",
+          gifterPeer = rlnRelayConf.gifterNode,
+          idCommitment = idCommitmentHex[0 .. 15] & "..."
+
+        let regResult =
+          (await gifterClient.requestMembership(
+            idCommitmentHex, rlnRelayConf.userMessageLimit, gifterPeer
+          )).valueOr:
+            return err("failed to register via gifter: " & error)
+
+        gm.idCredentials = some(idCred)
+        gm.userMessageLimit = some(rlnRelayConf.userMessageLimit)
+        gm.membershipIndex = some(MembershipIndex(regResult.leafIndex))
+        relay_rln_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
+
+        info "Registered via RLN gifter",
+          leafIndex = regResult.leafIndex,
+          configAccount = regResult.configAccountId
 
   # NOTE Must be mounted after relay
   if conf.lightPush:
