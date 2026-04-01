@@ -255,12 +255,12 @@ REOF
             </dev/null >"$LOG_FILE" 2>&1 &
     else
         # Nodes 1+2: createNode auto-registers via gifter protocol (config has rlnRelayGifterNode)
+        # Fetcher + event subscriptions are set up automatically in createNode
         TMPDIR=/tmp "$LOGOSCORE" -m "$MDIR" -l "$LOAD_ORDER" \
             -c "$WALLET_CALL" \
             -c "delivery_module.createNode(@$NODE_CONFIG)" \
             -c "delivery_module.start()" \
             -c "delivery_module.subscribe($CONTENT_TOPIC)" \
-            -c "liblogos_rln_module.start_root_broadcast($CONFIG_ACCOUNT)" \
             </dev/null >"$LOG_FILE" 2>&1 &
     fi
     INSTANCE_PIDS+=($!)
@@ -268,9 +268,9 @@ REOF
 
     # Wait for init
     # Node 0: 2 calls (wallet.open + mix_simulation_module.start)
-    # Other nodes: 5 calls (wallet + createNode + start + subscribe + broadcast)
-    # Note: gifter registration happens inside createNode (during setupProtocols)
-    EXPECTED_CALLS=5
+    # Other nodes: 4 calls (wallet + createNode + start + subscribe)
+    # Note: gifter registration + fetcher/event setup happen inside createNode
+    EXPECTED_CALLS=4
     [ "$i" -eq 0 ] && EXPECTED_CALLS=2
     for t in $(seq 1 120); do
         N=$(grep -c '^Method call successful' "$LOG_FILE" 2>/dev/null || true); N=${N:-0}

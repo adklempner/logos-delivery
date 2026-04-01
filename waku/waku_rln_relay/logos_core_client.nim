@@ -7,7 +7,7 @@
 ## Event-push caching provides fast access to roots/proofs.
 
 import std/[json, strutils, locks, algorithm, options]
-import chronos
+import chronos, chronos/threadsync
 import results
 import chronicles
 import ./group_manager/logos_core/group_manager
@@ -163,6 +163,99 @@ proc callRlnFetcher*(methodName: string, params: string): Result[string, string]
     if fetchResult.json.len == 0:
       return err("RLN fetcher returned empty response")
     return ok(fetchResult.json)
+
+type
+  RegisterMemberFunc* = proc(
+    paramsJson: cstring,
+    callback: RlnFetchCallback,
+    callbackData: pointer,
+    fetcherData: pointer
+  ): cint {.cdecl, gcsafe, raises: [].}
+
+var
+  registerMemberFunc: RegisterMemberFunc
+  registerMemberData: pointer
+
+proc setRegisterMemberFunc*(f: RegisterMemberFunc, data: pointer) {.gcsafe.} =
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    registerMemberFunc = f
+    registerMemberData = data
+    rlnFetcherLock.release()
+
+type ThreadArgs = object
+  fetcher: RlnFetcherFunc
+  fetcherData: pointer
+  methodBuf: cstring
+  paramsBuf: cstring
+  res: ptr FetchResult
+  sig: ThreadSignalPtr
+
+proc fetcherThreadBody(args: ThreadArgs) {.thread.} =
+  let cb: RlnFetchCallback = proc(callerRet: cint, msg: ptr cchar, len: csize_t, userData: pointer) {.cdecl, gcsafe, raises: [].} =
+    let r = cast[ptr FetchResult](userData)
+    if callerRet == 0 and not msg.isNil and len > 0:
+      r[].json = newString(len.int)
+      copyMem(addr r[].json[0], msg, len.int)
+      r[].success = true
+    elif not msg.isNil and len > 0:
+      r[].errMsg = newString(len.int)
+      copyMem(addr r[].errMsg[0], msg, len.int)
+      r[].success = false
+    else:
+      r[].success = (callerRet == 0)
+
+  discard args.fetcher(args.methodBuf, args.paramsBuf, cb, args.res, args.fetcherData)
+  discard args.sig.fireSync()
+
+proc callRlnFetcherAsync*(methodName: string, params: string): Future[Result[string, string]] {.async.} =
+  ## Async wrapper — runs the fetcher on a dedicated thread to avoid blocking the chronos event loop.
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    let fetcher = rlnFetcher
+    let data = rlnFetcherData
+    rlnFetcherLock.release()
+
+    if fetcher.isNil:
+      return err("RLN fetcher not registered")
+
+    let signal = ThreadSignalPtr.new().valueOr:
+      return err("failed to create thread signal")
+    defer:
+      discard signal.close()
+
+    # Allocate stable copies of strings for the thread
+    var methodCopy = allocShared0(methodName.len + 1)
+    var paramsCopy = allocShared0(params.len + 1)
+    copyMem(methodCopy, unsafeAddr methodName[0], methodName.len)
+    copyMem(paramsCopy, unsafeAddr params[0], params.len)
+    defer:
+      deallocShared(methodCopy)
+      deallocShared(paramsCopy)
+
+    var fetchRes: FetchResult
+    var thread: Thread[ThreadArgs]
+
+    createThread(thread, fetcherThreadBody,
+      ThreadArgs(
+        fetcher: fetcher,
+        fetcherData: data,
+        methodBuf: cast[cstring](methodCopy),
+        paramsBuf: cast[cstring](paramsCopy),
+        res: addr fetchRes,
+        sig: signal,
+      ))
+
+    await signal.wait()
+    joinThread(thread)
+
+    if not fetchRes.success:
+      if fetchRes.errMsg.len > 0:
+        return err(fetchRes.errMsg)
+      return err("RLN fetcher async call failed")
+    if fetchRes.json.len == 0:
+      return err("RLN fetcher returned empty response")
+    return ok(fetchRes.json)
 
 proc hexToBytes32(hex: string): Result[array[32, byte], string] =
   var h = hex
