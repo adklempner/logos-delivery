@@ -79,6 +79,36 @@ type WakuNodeConf* = object
     name: "log-format"
   .}: logging.LogFormat
 
+  rlnRelayLogosCore* {.
+    desc: "Use logos-core (LEZ) instead of Ethereum for RLN group management",
+    defaultValue: false,
+    name: "rln-relay-logos-core"
+  .}: bool
+
+  rlnRelayIdentitySecretHash* {.
+    desc: "Hex-encoded identity secret hash for RLN proof generation (logos-core mode)",
+    defaultValue: "",
+    name: "rln-relay-identity-secret-hash"
+  .}: string
+
+  rlnRelayGifterService* {.
+    desc: "Serve as an RLN gifter (register memberships for peers)",
+    defaultValue: false,
+    name: "rln-relay-gifter-service"
+  .}: bool
+
+  rlnRelayGifterWalletAccount* {.
+    desc: "Wallet account ID for gifter to fund registrations",
+    defaultValue: "",
+    name: "rln-relay-gifter-wallet-account"
+  .}: string
+
+  rlnRelayGifterNode* {.
+    desc: "Multiaddr of an RLN gifter peer to register through",
+    defaultValue: "",
+    name: "rln-relay-gifter-node"
+  .}: string
+
   rlnRelayCredPath* {.
     desc: "The path for persisting rln-relay credential",
     defaultValue: "",
@@ -952,6 +982,11 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.withLogFormat(n.logFormat)
 
   b.rlnRelayConf.withEnabled(n.rlnRelay)
+  b.rlnRelayConf.withLogosCore(n.rlnRelayLogosCore)
+  b.rlnRelayConf.withIdentitySecretHash(n.rlnRelayIdentitySecretHash)
+  b.rlnRelayConf.withGifterService(n.rlnRelayGifterService)
+  b.rlnRelayConf.withGifterWalletAccount(n.rlnRelayGifterWalletAccount)
+  b.rlnRelayConf.withGifterNode(n.rlnRelayGifterNode)
   if n.rlnRelayCredPath != "":
     b.rlnRelayConf.withCredPath(n.rlnRelayCredPath)
   if n.rlnRelayCredPassword != "":

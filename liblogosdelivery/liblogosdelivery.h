@@ -93,6 +93,42 @@ extern "C"
                                     FFICallBack callback,
                                     void *userData);
 
+  int logosdelivery_init(void);
+
+  // RLN fetcher: C++ implements this, Nim calls it to get roots/proofs from RLN module.
+  // method: "get_valid_roots" or "get_merkle_proofs"
+  // params: JSON string with method-specific parameters
+  // callback + callbackData: Nim's callback to receive the result
+  // fetcherData: opaque pointer passed during registration (typically the C++ plugin instance)
+  typedef int (*RlnFetcherFunc)(const char *method, const char *params,
+      FFICallBack callback, void *callbackData, void *fetcherData);
+
+  // Register the RLN fetcher callback (called by C++ delivery module at startup).
+  void logosdelivery_set_rln_fetcher(void *ctx, RlnFetcherFunc fetcher, void *fetcherData);
+
+  // Set RLN configuration: config account ID and leaf index for this node.
+  int logosdelivery_set_rln_config(void *ctx, const char *configAccountId, int leafIndex);
+
+  // Generate an RLN identity from a wallet account.
+  // walletAccountId: the wallet account ID to derive identity from
+  // callback receives JSON: {"id_commitment": "hex...", "id_secret_hash": "hex..."}
+  int logosdelivery_generate_identity(void *ctx,
+                                      FFICallBack callback,
+                                      void *userData,
+                                      const char *walletAccountId);
+
+  // Register a membership on the RLN tree via the gifter service.
+  // paramsJson: JSON object with configAccountId, userHoldingAccountId, idCommitment, rateLimit
+  // callback receives JSON: {"leaf_index": N, "tx_result": "..."}
+  int logosdelivery_register_member(void *ctx,
+                                    FFICallBack callback,
+                                    void *userData,
+                                    const char *paramsJson);
+
+  // Set the RLN identity secret hash (called after self-registration).
+  // Sets credentials on the group manager for proof generation.
+  void logosdelivery_set_rln_identity(void *ctx, const char *idSecretHashHex);
+
 #ifdef __cplusplus
 }
 #endif

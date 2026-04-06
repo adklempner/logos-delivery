@@ -223,10 +223,11 @@ proc validateNoEmptyStrings(wakuConf: WakuConf): Result[void, string] =
   if wakuConf.rlnRelayConf.isSome():
     let rlnRelayConf = wakuConf.rlnRelayConf.get()
 
-    if rlnRelayConf.ethClientUrls.len == 0:
-      return err("rln-relay-eth-client-address is empty")
-    if isEmptyOrWhiteSpace(rlnRelayConf.ethContractAddress):
-      return err("rln-relay-eth-contract-address is an empty string")
+    if not rlnRelayConf.logosCore:
+      if rlnRelayConf.ethClientUrls.len == 0:
+        return err("rln-relay-eth-client-address is empty")
+      if isEmptyOrWhiteSpace(rlnRelayConf.ethContractAddress):
+        return err("rln-relay-eth-contract-address is an empty string")
 
     if rlnRelayConf.creds.isSome():
       let creds = rlnRelayConf.creds.get()
