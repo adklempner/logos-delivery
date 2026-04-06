@@ -2,7 +2,6 @@
 
 ## Relay RLN client: fetches roots/proofs from logos-core via C++ RLN module.
 ##
-## Adapted from waku_mix/logos_core_client.nim for relay RLN use.
 ## The C++ delivery module registers an RLN fetcher at startup.
 ## Event-push caching provides fast access to roots/proofs.
 
