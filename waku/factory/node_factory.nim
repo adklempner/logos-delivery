@@ -20,6 +20,8 @@ import
   ../waku_core,
   ../waku_core/codecs,
   ../waku_rln_relay,
+  ../waku_mix/logos_core_client as mix_lez_client,
+  mix_rln_spam_protection/onchain_group_manager,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -167,8 +169,47 @@ proc setupProtocols(
   #mount mix
   if conf.mixConf.isSome():
     let mixConf = conf.mixConf.get()
-    (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes)).isOkOr:
+    (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes,
+                         useOnchainLEZ = mixConf.useOnchainLEZ)).isOkOr:
       return err("failed to mount waku mix protocol: " & $error)
+
+    # Wire LEZ callbacks if on-chain mode is enabled.
+    # The OnchainLEZGroupManager polls roots/proofs from the LEZ RLN module
+    # via the fetcher callback bridge set up by setRlnConfig in the C++ plugin.
+    if mixConf.useOnchainLEZ and not node.wakuMix.isNil:
+      let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+      if gm of OnchainLEZGroupManager:
+        let lezGm = OnchainLEZGroupManager(gm)
+        # Adapt logos_core_client callbacks to OnchainLEZGroupManager types
+        let clientFetchRoots = mix_lez_client.makeFetchLatestRoots()
+        let clientFetchProof = mix_lez_client.makeFetchMerkleProof()
+
+        let fetchRoots: onchain_group_manager.FetchRootsCallback =
+          proc(): Future[Result[seq[onchain_group_manager.MerkleNode], string]] {.async, gcsafe, raises: [].} =
+            let res = await clientFetchRoots()
+            if res.isOk:
+              var nodes: seq[onchain_group_manager.MerkleNode]
+              for r in res.get():
+                nodes.add(onchain_group_manager.MerkleNode(r))
+              return ok(nodes)
+            else:
+              return err(res.error)
+
+        let fetchProof: onchain_group_manager.FetchProofCallback =
+          proc(index: onchain_group_manager.MembershipIndex): Future[Result[onchain_group_manager.ExternalMerkleProof, string]] {.async, gcsafe, raises: [].} =
+            let res = await clientFetchProof(mix_lez_client.MembershipIndex(index))
+            if res.isOk:
+              let p = res.get()
+              return ok(onchain_group_manager.ExternalMerkleProof(
+                pathElements: p.pathElements,
+                identityPathIndex: p.identityPathIndex,
+                root: onchain_group_manager.MerkleNode(p.root),
+              ))
+            else:
+              return err(res.error)
+
+        lezGm.setFetchCallbacks(fetchRoots, fetchProof)
+        info "Wired LEZ callbacks for mix RLN spam protection"
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():

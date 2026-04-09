@@ -643,6 +643,12 @@ with the drawback of consuming some more bandwidth.""",
       name: "mixnode"
     .}: seq[MixNodePubInfo]
 
+    mixOnchainLEZ* {.
+      desc: "Use on-chain LEZ (LSSA sequencer) for mix RLN spam protection instead of off-chain keystores.",
+      defaultValue: false,
+      name: "mix-onchain-lez"
+    .}: bool
+
     # Kademlia Discovery config
     enableKadDiscovery* {.
       desc:
@@ -1070,6 +1076,7 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
 
   b.mixConf.withEnabled(n.mix)
   b.mixConf.withMixNodes(n.mixnodes)
+  b.mixConf.withUseOnchainLEZ(n.mixOnchainLEZ)
   b.withMix(n.mix)
   if n.mixkey.isSome():
     b.mixConf.withMixKey(n.mixkey.get())
