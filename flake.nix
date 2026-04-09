@@ -15,9 +15,15 @@
       url = "git+https://github.com/vacp2p/zerokit?rev=3160d9504d07791f2fc9b610948a6cf9a58ed488";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Mix RLN spam protection requires a separate, newer zerokit (v2.0.0).
+    # Pinned by tag to match what scripts/build_rln_mix.sh uses by default.
+    zerokitMix = {
+      url = "git+https://github.com/vacp2p/zerokit?ref=refs/tags/v2.0.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, zerokit }:
+  outputs = { self, nixpkgs, zerokit, zerokitMix }:
     let
       stableSystems = [
         "x86_64-linux" "aarch64-linux"
@@ -76,6 +82,7 @@
           src = self;
           targets = ["liblogosdelivery"];
           zerokitRln = zerokit.packages.${system}.rln;
+          zerokitMixRln = zerokitMix.packages.${system}.rln;
         };
 
         default = libwaku;
