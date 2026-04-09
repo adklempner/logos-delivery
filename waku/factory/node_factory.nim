@@ -209,6 +209,9 @@ proc setupProtocols(
               return err(res.error)
 
         lezGm.setFetchCallbacks(fetchRoots, fetchProof)
+        # Store group manager ref so setRlnIdentity (from selfRegisterRln callback)
+        # can set credentials on it when registration completes
+        mix_lez_client.setGroupManagerRef(cast[pointer](lezGm))
         info "Wired LEZ callbacks for mix RLN spam protection"
 
   # Setup extended kademlia discovery

@@ -10,6 +10,8 @@ import std/[json, strutils, locks, algorithm, options]
 import chronos, chronos/threadsync
 import results
 import chronicles
+import mix_rln_spam_protection/group_manager {.all.}
+import mix_rln_spam_protection/types {.all.}
 
 logScope:
   topics = "waku mix rln-lez-client"
@@ -43,6 +45,7 @@ var
   rlnConfigAccountId: string
   rlnLeafIndex: int = -1
   rlnIdentitySecretHash: string
+  rlnGroupManager: pointer  # Stores ref to OnchainLEZGroupManager for deferred identity setting
   cachedRootsJson: string
   cachedProofJson: string
 
@@ -62,14 +65,41 @@ proc setRlnConfig*(configAccountId: string, leafIndex: int) {.gcsafe.} =
     rlnLeafIndex = leafIndex
     rlnFetcherLock.release()
 
+proc setGroupManagerRef*(gm: pointer) {.gcsafe.} =
+  ## Store a reference to the OnchainLEZGroupManager so setRlnIdentity can
+  ## set credentials on it when they arrive from selfRegisterRln.
+  {.gcsafe.}:
+    rlnFetcherLock.acquire()
+    rlnGroupManager = gm
+    rlnFetcherLock.release()
+
 proc setRlnIdentity*(idSecretHashHex: string) {.gcsafe.} =
-  ## Store the identity secret hash for later retrieval.
-  ## Credentials are set on OnchainLEZGroupManager directly from node_factory.
+  ## Set the identity secret hash and propagate credentials to the group manager.
+  ## Called by the C++ plugin after selfRegisterRln completes.
   {.gcsafe.}:
     rlnFetcherLock.acquire()
     rlnIdentitySecretHash = idSecretHashHex
+    let gm = rlnGroupManager
+    let leafIdx = rlnLeafIndex
     rlnFetcherLock.release()
+
     trace "Set mix RLN identity secret hash", hashPrefix = idSecretHashHex[0 .. min(7, idSecretHashHex.len - 1)]
+
+    # Set credentials on the group manager if available
+    if not gm.isNil and idSecretHashHex.len == 64:
+      var idSecretHash: IDSecretHash
+      for i in 0 ..< 32:
+        try:
+          idSecretHash[i] = byte(parseHexInt(idSecretHashHex[i * 2 .. i * 2 + 1]))
+        except ValueError:
+          return
+      var cred: IdentityCredential
+      cred.idSecretHash = idSecretHash
+      let gmRef = cast[GroupManager](gm)
+      gmRef.credentials = some(cred)
+      if leafIdx >= 0:
+        gmRef.membershipIndex = some(types.MembershipIndex(leafIdx))
+      info "Set mix RLN identity on group manager", leafIndex = leafIdx
 
 proc getRlnIdentity*(): string {.gcsafe.} =
   {.gcsafe.}:
