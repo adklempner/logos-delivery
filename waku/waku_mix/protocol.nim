@@ -87,6 +87,7 @@ proc new*(
     bootnodes: seq[MixNodePubInfo],
     publishMessage: PublishMessage,
     userMessageLimit: Option[int] = none(int),
+    useOnchainLEZ: bool = false,
 ): WakuMixResult[T] =
   let mixPubKey = public(mixPrivKey)
   trace "mixPubKey", mixPubKey = mixPubKey
@@ -97,16 +98,15 @@ proc new*(
     peermgr.switch.peerInfo.publicKey.skkey, peermgr.switch.peerInfo.privateKey.skkey,
   )
 
-  # Initialize spam protection with persistent credentials
-  # Use peerID in keystore path so multiple peers can run from same directory
-  # Tree path is shared across all nodes to maintain the full membership set
   let peerId = peermgr.switch.peerInfo.peerId
   var spamProtectionConfig = defaultConfig()
-  spamProtectionConfig.keystorePath = "rln_keystore_" & $peerId & ".json"
-  spamProtectionConfig.keystorePassword = "mix-rln-password"
+  spamProtectionConfig.useOnchainLEZ = useOnchainLEZ
+  if not useOnchainLEZ:
+    # Off-chain: use local keystore + tree files
+    spamProtectionConfig.keystorePath = "rln_keystore_" & $peerId & ".json"
+    spamProtectionConfig.keystorePassword = "mix-rln-password"
   if userMessageLimit.isSome():
     spamProtectionConfig.userMessageLimit = userMessageLimit.get()
-  # rlnResourcesPath left empty to use bundled resources (via "tree_height_/" placeholder)
 
   let spamProtection = newMixRlnSpamProtection(spamProtectionConfig).valueOr:
     return err("failed to create spam protection: " & error)
