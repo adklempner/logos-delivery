@@ -21,6 +21,7 @@ import
   ../waku_core/codecs,
   ../waku_rln_relay,
   ../waku_mix/logos_core_client as mix_lez_client,
+  ../waku_mix/protocol as mix_protocol,
   mix_rln_spam_protection/onchain_group_manager,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
@@ -511,6 +512,13 @@ proc startNode*(
   except CatchableError:
     return err("failed to start waku node: " & getCurrentExceptionMsg())
 
+  # Start deferred OnchainLEZ poll loop now that the switch is fully started.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      not node.wakuMix.isNil():
+    let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+    if gm of OnchainLEZGroupManager:
+      OnchainLEZGroupManager(gm).startPolling()
+
   # Connect to configured static nodes
   if conf.staticNodes.len > 0:
     try:
@@ -549,6 +557,18 @@ proc startNode*(
     let minMixPeers = if conf.mixConf.isSome(): 4 else: 0
     (await node.wakuKademlia.start(minMixPeers = minMixPeers)).isOkOr:
       return err("failed to start kademlia discovery: " & error)
+
+  # Re-publish gossipsub trigger messages now that the switch is running and
+  # kademlia has bootstrapped.  In LEZ mode the dummy publish during
+  # WakuMix.start() fires before the switch is ready (0 peers on topic).
+  # Publishing again here ensures gossipsub SUBSCRIBE messages flow to peers,
+  # which triggers peer exchange and populates kademlia routing tables.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      not node.wakuMix.isNil():
+    try:
+      await node.wakuMix.publishGossipsubTrigger()
+    except CatchableError:
+      warn "gossipsub trigger publish failed", error = getCurrentExceptionMsg()
 
   return ok()
 

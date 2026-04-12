@@ -362,16 +362,13 @@ proc makeFetchMerkleProof*(): FetchMerkleProofCallback =
       if res.isOk:
         trace "Using cached proof from event push", index = index
       return res
-    let (configAccount, leafIndex) = getRlnConfig()
+    let (configAccount, _) = getRlnConfig()
     if configAccount.len == 0:
       return err("RLN config not set")
-    let params = configAccount & "," & $leafIndex
+    let params = configAccount & "," & $index
     let proofJson = callRlnFetcher("get_merkle_proofs", params)
     if proofJson.isErr:
       return err(proofJson.error)
-    let res = parseExternalProof(proofJson.get())
-    if res.isOk:
-      trace "Fetched merkle proof from RLN module via fetcher", index = index
-    return res
+    return parseExternalProof(proofJson.get())
 
 {.pop.}

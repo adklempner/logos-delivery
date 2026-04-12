@@ -97,6 +97,18 @@ proc setupCredentialsAndTree() {.async.} =
 
   echo ""
 
+  # Export identity commitments + secret hashes for on-chain registration (LEZ mode)
+  # Format: idCommitmentHex,rateLimit,idSecretHashHex
+  let commitmentsFile = "rln_commitments.csv"
+  var csvData = ""
+  for i, entry in allCredentials:
+    csvData.add(entry.cred.idCommitment.toHex() & "," & $entry.rateLimit &
+                "," & entry.cred.idSecretHash.toHex() & "\n")
+  writeFile(commitmentsFile, csvData)
+  echo "Exported identity commitments to ", commitmentsFile
+
+  echo ""
+
   # Save the tree to disk
   echo "Saving tree to rln_tree.db..."
   let saveRes = groupManager.saveTreeToFile("rln_tree.db")

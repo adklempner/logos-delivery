@@ -101,10 +101,10 @@ proc new*(
   let peerId = peermgr.switch.peerInfo.peerId
   var spamProtectionConfig = defaultConfig()
   spamProtectionConfig.useOnchainLEZ = useOnchainLEZ
-  if not useOnchainLEZ:
-    # Off-chain: use local keystore + tree files
-    spamProtectionConfig.keystorePath = "rln_keystore_" & $peerId & ".json"
-    spamProtectionConfig.keystorePassword = "mix-rln-password"
+  # Always load credentials from keystore (needed for per-hop proof generation).
+  # In LEZ mode, roots/proofs come from the on-chain tree, but credentials are local.
+  spamProtectionConfig.keystorePath = "rln_keystore_" & $peerId & ".json"
+  spamProtectionConfig.keystorePassword = "mix-rln-password"
   if userMessageLimit.isSome():
     spamProtectionConfig.userMessageLimit = userMessageLimit.get()
 
@@ -279,6 +279,39 @@ method start*(mix: WakuMix) {.async.} =
           warn "Failed to save spam protection tree", error = saveRes.error
         else:
           trace "Saved spam protection tree to disk"
+
+      # Ensure gossipsub mesh is joined for spam protection topics.
+      # In off-chain mode this happens as a side effect of registerSelf() broadcasting;
+      # in LEZ mode registerSelf() fails so we publish explicitly to trigger the
+      # gossipsub SUBSCRIBE flow that enables kademlia peer exchange.
+      let spTopics = mix.getSpamProtectionContentTopics()
+      info "Publishing to spam protection topics for gossipsub mesh join",
+        topicCount = spTopics.len, hasPublishMessage = not mix.publishMessage.isNil
+      if not mix.publishMessage.isNil:
+        for ct in spTopics:
+          info "Publishing dummy message to trigger gossipsub SUBSCRIBE", contentTopic = ct
+          let msg = WakuMessage(contentTopic: ct, payload: @[byte(0)])
+          let pubRes = await mix.publishMessage(msg)
+          if pubRes.isErr:
+            warn "Failed to publish gossipsub trigger message", contentTopic = ct, error = pubRes.error
+          else:
+            info "Published gossipsub trigger message", contentTopic = ct
+
+proc publishGossipsubTrigger*(mix: WakuMix) {.async.} =
+  ## Publish dummy messages to spam protection topics to trigger gossipsub
+  ## SUBSCRIBE flow and kademlia peer exchange.  Call AFTER the node is fully
+  ## started (switch running, peers connected) so the messages actually reach
+  ## gossipsub mesh peers.
+  if mix.publishMessage.isNil or mix.mixRlnSpamProtection.isNil:
+    return
+  let spTopics = mix.getSpamProtectionContentTopics()
+  for ct in spTopics:
+    let msg = WakuMessage(contentTopic: ct, payload: @[byte(0)])
+    let pubRes = await mix.publishMessage(msg)
+    if pubRes.isErr:
+      debug "gossipsub trigger failed (expected if no peers yet)", contentTopic = ct
+    else:
+      info "Published gossipsub trigger (post-start)", contentTopic = ct
 
 method stop*(mix: WakuMix) {.async.} =
   # Stop spam protection
