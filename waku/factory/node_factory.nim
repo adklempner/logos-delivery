@@ -1,5 +1,5 @@
 import
-  std/[options, sequtils],
+  std/[options, sequtils, json, strutils],
   chronicles,
   chronos,
   libp2p/peerid,
@@ -23,6 +23,9 @@ import
   ../waku_mix/logos_core_client as mix_lez_client,
   ../waku_mix/protocol as mix_protocol,
   mix_rln_spam_protection/onchain_group_manager,
+  mix_rln_spam_protection/rln_interface as mix_rln_interface,
+  ../waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
+  ../waku_rln_relay/rln_gifter/client as rln_gifter_client,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -214,6 +217,76 @@ proc setupProtocols(
         # can set credentials on it when registration completes
         mix_lez_client.setGroupManagerRef(cast[pointer](lezGm))
         info "Wired LEZ callbacks for mix RLN spam protection"
+
+        # Mount RLN gifter server if configured
+        if mixConf.gifterService:
+          let walletAccount = mixConf.gifterWalletAccount
+          let registerHandler: rln_gifter_protocol.RegisterMemberHandler =
+            proc(
+                idCommitment: string, rateLimit: uint64
+            ): Future[
+                Result[tuple[leafIndex: uint64, configAccountId: string], string]
+            ] {.async, gcsafe.} =
+              let (configAccount, _) = mix_lez_client.getRlnConfig()
+              if configAccount.len == 0:
+                return err("RLN config not set on gifter node")
+              let holdingAccount =
+                if walletAccount.len > 0: walletAccount else: configAccount
+              let params =
+                "{\"configAccountId\":\"" & configAccount &
+                "\",\"userHoldingAccountId\":\"" & holdingAccount &
+                "\",\"idCommitment\":\"" & idCommitment &
+                "\",\"rateLimit\":" & $rateLimit & "}"
+              let regResult = mix_lez_client.callRlnFetcher("register_member", params)
+              if regResult.isErr:
+                return err(regResult.error)
+              try:
+                let parsed = parseJson(regResult.get())
+                let leafIndex = parsed["leaf_index"].getInt().uint64
+                return ok((leafIndex: leafIndex, configAccountId: configAccount))
+              except CatchableError:
+                return err("failed to parse register_member result")
+
+          let gifter = rln_gifter_protocol.WakuRlnGifter.new(
+            node.peerManager, node.rng, registerHandler
+          )
+          node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
+          info "RLN gifter service mounted for mix"
+
+        # Mount RLN gifter client and auto-register if gifterNode configured
+        if mixConf.gifterNode.len > 0:
+          let gifterClient = rln_gifter_client.WakuRlnGifterClient.new(
+            node.peerManager, node.rng
+          )
+          let gifterPeer = parsePeerInfo(mixConf.gifterNode).valueOr:
+            return err("failed to parse gifter peer: " & error)
+          node.peerManager.addServicePeer(gifterPeer, WakuRlnGifterCodec)
+
+          let idCred = mix_rln_interface.membershipKeyGen().valueOr:
+            return err("failed to generate RLN identity: " & $error)
+          let idCommitmentHex = block:
+            var hex = ""
+            for b in idCred.idCommitment:
+              hex.add(toHex(int(b), 2))
+            hex
+
+          info "Generated RLN identity, requesting membership from gifter",
+            gifterPeer = mixConf.gifterNode,
+            idCommitment = idCommitmentHex[0 .. 15] & "..."
+
+          let regResult =
+            (await gifterClient.requestMembership(
+              idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer
+            )).valueOr:
+              return err("failed to register via gifter: " & error)
+
+          lezGm.credentials = some(idCred)
+          lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(regResult.leafIndex))
+          mix_lez_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
+
+          info "Registered via RLN gifter",
+            leafIndex = regResult.leafIndex,
+            configAccount = regResult.configAccountId
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():

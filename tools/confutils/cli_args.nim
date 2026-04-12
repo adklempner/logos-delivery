@@ -649,6 +649,24 @@ with the drawback of consuming some more bandwidth.""",
       name: "mix-onchain-lez"
     .}: bool
 
+    mixGifterService* {.
+      desc: "Run as RLN gifter service for mix nodes.",
+      defaultValue: false,
+      name: "mix-gifter-service"
+    .}: bool
+
+    mixGifterWalletAccount* {.
+      desc: "Wallet account ID for RLN gifter registration payments.",
+      defaultValue: "",
+      name: "mix-gifter-wallet-account"
+    .}: string
+
+    mixGifterNode* {.
+      desc: "Multiaddress of the RLN gifter node (for client auto-registration).",
+      defaultValue: "",
+      name: "mix-gifter-node"
+    .}: string
+
     # Kademlia Discovery config
     enableKadDiscovery* {.
       desc:
@@ -1077,6 +1095,9 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.mixConf.withEnabled(n.mix)
   b.mixConf.withMixNodes(n.mixnodes)
   b.mixConf.withUseOnchainLEZ(n.mixOnchainLEZ)
+  b.mixConf.withGifterService(n.mixGifterService)
+  b.mixConf.withGifterWalletAccount(n.mixGifterWalletAccount)
+  b.mixConf.withGifterNode(n.mixGifterNode)
   b.withMix(n.mix)
   if n.mixkey.isSome():
     b.mixConf.withMixKey(n.mixkey.get())
