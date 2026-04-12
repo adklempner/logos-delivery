@@ -72,8 +72,6 @@ proc handleRequest(
 proc initProtocolHandler(wg: WakuRlnGifter) =
   proc handler(conn: Connection, proto: string) {.async: (raises: [CancelledError]).} =
     var rpc: RlnGifterResponse
-    defer:
-      await conn.closeWithEOF()
 
     var buffer: seq[byte]
     try:

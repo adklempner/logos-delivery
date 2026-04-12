@@ -54,9 +54,6 @@ proc requestMembership*(
     warn "gifter dial failed, retrying", attempt = dialAttempts
     await sleepAsync(seconds(5))
 
-  defer:
-    await connection.closeWithEOF()
-
   try:
     await connection.writeLP(request.encode().buffer)
   except LPStreamError:
