@@ -253,11 +253,10 @@ proc setupProtocols(
           node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
           info "RLN gifter service mounted for mix"
 
-        # Client nodes register via selfRegisterRln() called from the sim script.
-        # selfRegisterRln passes the seed to setRlnIdentity, which regenerates
-        # the full credential via membershipKeyGen(seed).
+        # Gifter client registration is deferred to startNode() where the switch
+        # is fully running and the gifter service peer is reachable.
         if mixConf.gifterNode.len > 0:
-          info "Registration deferred to selfRegisterRln()"
+          info "Gifter client mode: registration deferred to startNode()"
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():
@@ -577,6 +576,59 @@ proc startNode*(
     except CatchableError:
       return
         err("failed to connect to dynamic bootstrap nodes: " & getCurrentExceptionMsg())
+
+  # RLN gifter client registration (deferred from setupProtocols to avoid FFI crash).
+  # Now the switch is running and the gifter service peer is reachable via static nodes.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      conf.mixConf.get().gifterNode.len > 0 and not node.wakuMix.isNil():
+    let mixConf = conf.mixConf.get()
+    let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+    if gm of OnchainLEZGroupManager:
+      let lezGm = OnchainLEZGroupManager(gm)
+      let gifterClient = rln_gifter_client.WakuRlnGifterClient.new(
+        node.peerManager, node.rng
+      )
+      let gifterPeer = parsePeerInfo(mixConf.gifterNode).valueOr:
+        return err("failed to parse gifter peer: " & error)
+      node.peerManager.addServicePeer(gifterPeer, WakuRlnGifterCodec)
+
+      # If credentials are already loaded from keystore (pre-registered via
+      # register_commitments), skip gifter registration.
+      if lezGm.credentials.isSome and lezGm.membershipIndex.isSome:
+        info "Credentials already loaded from keystore, skipping gifter registration",
+          leafIndex = lezGm.membershipIndex.get()
+      else:
+        # No keystore credentials — register via gifter protocol
+        let idCred = mix_rln_interface.membershipKeyGen().valueOr:
+          return err("failed to generate RLN identity: " & $error)
+        let idCommitmentHex = block:
+          var hex = ""
+          for b in idCred.idCommitment:
+            hex.add(toHex(int(b), 2))
+          hex
+
+        info "Registering via RLN gifter (post-start)",
+          gifterPeer = mixConf.gifterNode,
+          idCommitment = idCommitmentHex[0 .. 15] & "..."
+
+        var regResult: tuple[leafIndex: uint64, configAccountId: string]
+        try:
+          let res = await gifterClient.requestMembership(
+            idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer
+          )
+          if res.isErr:
+            return err("failed to register via gifter: " & res.error)
+          regResult = res.get()
+        except CatchableError:
+          return err("gifter registration exception: " & getCurrentExceptionMsg())
+
+        lezGm.credentials = some(idCred)
+        lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(regResult.leafIndex))
+        mix_lez_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
+
+        info "Registered via RLN gifter",
+          leafIndex = regResult.leafIndex,
+          configAccount = regResult.configAccountId
 
   # retrieve px peers and add the to the peer store
   if conf.remotePeerExchangeNode.isSome():
