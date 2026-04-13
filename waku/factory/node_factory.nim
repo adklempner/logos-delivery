@@ -253,11 +253,11 @@ proc setupProtocols(
           node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
           info "RLN gifter service mounted for mix"
 
-        # Gifter client registration is handled via delivery_module.selfRegisterRln()
-        # called from the sim script after start(). This avoids a libp2p connection
-        # during createNode which causes an FFI crash (SIGSEGV in ffi_thread_request).
+        # Client nodes register via selfRegisterRln() called from the sim script.
+        # selfRegisterRln passes the seed to setRlnIdentity, which regenerates
+        # the full credential via membershipKeyGen(seed).
         if mixConf.gifterNode.len > 0:
-          info "Gifter client mode: registration deferred to selfRegisterRln()"
+          info "Registration deferred to selfRegisterRln()"
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():

@@ -12,6 +12,7 @@ import results
 import chronicles
 import mix_rln_spam_protection/group_manager {.all.}
 import mix_rln_spam_protection/types {.all.}
+import mix_rln_spam_protection/rln_interface
 
 logScope:
   topics = "waku mix rln-lez-client"
@@ -74,7 +75,9 @@ proc setGroupManagerRef*(gm: pointer) {.gcsafe.} =
     rlnFetcherLock.release()
 
 proc setRlnIdentity*(idSecretHashHex: string) {.gcsafe.} =
-  ## Set the identity secret hash and propagate credentials to the group manager.
+  ## Set the identity and propagate full credentials to the group manager.
+  ## The idSecretHashHex is used as the seed to regenerate the full credential
+  ## (idTrapdoor, idNullifier, idSecretHash, idCommitment) via membershipKeyGen.
   ## Called by the C++ plugin after selfRegisterRln completes.
   {.gcsafe.}:
     rlnFetcherLock.acquire()
@@ -83,23 +86,31 @@ proc setRlnIdentity*(idSecretHashHex: string) {.gcsafe.} =
     let leafIdx = rlnLeafIndex
     rlnFetcherLock.release()
 
-    trace "Set mix RLN identity secret hash", hashPrefix = idSecretHashHex[0 .. min(7, idSecretHashHex.len - 1)]
+    trace "Set mix RLN identity", hashPrefix = idSecretHashHex[0 .. min(7, idSecretHashHex.len - 1)]
 
-    # Set credentials on the group manager if available
     if not gm.isNil and idSecretHashHex.len == 64:
-      var idSecretHash: IDSecretHash
+      # Parse hex to bytes for use as seed
+      var seedBytes: seq[byte]
       for i in 0 ..< 32:
         try:
-          idSecretHash[i] = byte(parseHexInt(idSecretHashHex[i * 2 .. i * 2 + 1]))
+          seedBytes.add(byte(parseHexInt(idSecretHashHex[i * 2 .. i * 2 + 1])))
         except ValueError:
+          warn "Invalid hex in identity hash"
           return
-      var cred: IdentityCredential
-      cred.idSecretHash = idSecretHash
+
+      # Generate full credential using the same seed that selfRegisterRln used
+      # via generate_identity. membershipKeyGen(seed) produces deterministic output.
+      let cred = membershipKeyGen(seedBytes).valueOr:
+        warn "Failed to regenerate full credential from seed", error = $error
+        return
+
       let gmRef = cast[GroupManager](gm)
       gmRef.credentials = some(cred)
       if leafIdx >= 0:
         gmRef.membershipIndex = some(types.MembershipIndex(leafIdx))
-      info "Set mix RLN identity on group manager", leafIndex = leafIdx
+      info "Set full RLN identity on group manager",
+        leafIndex = leafIdx,
+        commitment = cred.idCommitment[0 .. 7].toHex() & "..."
 
 proc getRlnIdentity*(): string {.gcsafe.} =
   {.gcsafe.}:
