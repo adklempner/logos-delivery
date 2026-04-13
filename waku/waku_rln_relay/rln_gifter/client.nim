@@ -57,13 +57,22 @@ proc requestMembership*(
   try:
     await connection.writeLP(request.encode().buffer)
   except LPStreamError:
+    try: await connection.closeWithEOF()
+    except CatchableError: discard
     return err("failed to write request: " & getCurrentExceptionMsg())
 
   var buffer: seq[byte]
   try:
     buffer = await connection.readLp(DefaultMaxRpcSize)
   except LPStreamError:
+    try: await connection.closeWithEOF()
+    except CatchableError: discard
     return err("failed to read response: " & getCurrentExceptionMsg())
+
+  # Close connection before returning to prevent use-after-free when yamux
+  # processes the remote close after this function's stack frame is freed.
+  try: await connection.closeWithEOF()
+  except CatchableError: discard
 
   let response = RlnGifterResponse.decode(buffer).valueOr:
     return err("failed to decode response: " & $error)
