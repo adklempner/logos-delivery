@@ -253,40 +253,11 @@ proc setupProtocols(
           node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
           info "RLN gifter service mounted for mix"
 
-        # Mount RLN gifter client and auto-register if gifterNode configured
+        # Gifter client registration is handled via delivery_module.selfRegisterRln()
+        # called from the sim script after start(). This avoids a libp2p connection
+        # during createNode which causes an FFI crash (SIGSEGV in ffi_thread_request).
         if mixConf.gifterNode.len > 0:
-          let gifterClient = rln_gifter_client.WakuRlnGifterClient.new(
-            node.peerManager, node.rng
-          )
-          let gifterPeer = parsePeerInfo(mixConf.gifterNode).valueOr:
-            return err("failed to parse gifter peer: " & error)
-          node.peerManager.addServicePeer(gifterPeer, WakuRlnGifterCodec)
-
-          let idCred = mix_rln_interface.membershipKeyGen().valueOr:
-            return err("failed to generate RLN identity: " & $error)
-          let idCommitmentHex = block:
-            var hex = ""
-            for b in idCred.idCommitment:
-              hex.add(toHex(int(b), 2))
-            hex
-
-          info "Generated RLN identity, requesting membership from gifter",
-            gifterPeer = mixConf.gifterNode,
-            idCommitment = idCommitmentHex[0 .. 15] & "..."
-
-          let regResult =
-            (await gifterClient.requestMembership(
-              idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer
-            )).valueOr:
-              return err("failed to register via gifter: " & error)
-
-          lezGm.credentials = some(idCred)
-          lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(regResult.leafIndex))
-          mix_lez_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
-
-          info "Registered via RLN gifter",
-            leafIndex = regResult.leafIndex,
-            configAccount = regResult.configAccountId
+          info "Gifter client mode: registration deferred to selfRegisterRln()"
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():

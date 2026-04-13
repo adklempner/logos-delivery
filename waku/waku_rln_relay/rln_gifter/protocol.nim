@@ -72,9 +72,10 @@ proc handleRequest(
 proc initProtocolHandler(wg: WakuRlnGifter) =
   proc handler(conn: Connection, proto: string) {.async: (raises: [CancelledError]).} =
     var rpc: RlnGifterResponse
-    defer:
-      try: await conn.closeWithEOF()
-      except CatchableError: discard
+    # NOTE: Do NOT close the connection from the server side. The client closes
+    # its side after reading the response. If the server closes first, the remote
+    # FIN triggers yamux cleanup on the client side after createNode returns,
+    # causing a use-after-free crash in the delivery module process.
 
     var buffer: seq[byte]
     try:
