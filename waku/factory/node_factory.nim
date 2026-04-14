@@ -1,5 +1,5 @@
 import
-  std/[options, sequtils],
+  std/[options, sequtils, json, strutils],
   chronicles,
   chronos,
   libp2p/peerid,
@@ -20,6 +20,12 @@ import
   ../waku_core,
   ../waku_core/codecs,
   ../waku_rln_relay,
+  ../waku_mix/logos_core_client as mix_lez_client,
+  ../waku_mix/protocol as mix_protocol,
+  mix_rln_spam_protection/onchain_group_manager,
+  mix_rln_spam_protection/rln_interface as mix_rln_interface,
+  ../waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
+  ../waku_rln_relay/rln_gifter/client as rln_gifter_client,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -167,8 +173,90 @@ proc setupProtocols(
   #mount mix
   if conf.mixConf.isSome():
     let mixConf = conf.mixConf.get()
-    (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes)).isOkOr:
+    (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes,
+                         useOnchainLEZ = mixConf.useOnchainLEZ)).isOkOr:
       return err("failed to mount waku mix protocol: " & $error)
+
+    # Wire LEZ callbacks if on-chain mode is enabled.
+    # The OnchainLEZGroupManager polls roots/proofs from the LEZ RLN module
+    # via the fetcher callback bridge set up by setRlnConfig in the C++ plugin.
+    if mixConf.useOnchainLEZ and not node.wakuMix.isNil:
+      let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+      if gm of OnchainLEZGroupManager:
+        let lezGm = OnchainLEZGroupManager(gm)
+        # Adapt logos_core_client callbacks to OnchainLEZGroupManager types
+        let clientFetchRoots = mix_lez_client.makeFetchLatestRoots()
+        let clientFetchProof = mix_lez_client.makeFetchMerkleProof()
+
+        let fetchRoots: onchain_group_manager.FetchRootsCallback =
+          proc(): Future[Result[seq[onchain_group_manager.MerkleNode], string]] {.async, gcsafe, raises: [].} =
+            let res = await clientFetchRoots()
+            if res.isOk:
+              var nodes: seq[onchain_group_manager.MerkleNode]
+              for r in res.get():
+                nodes.add(onchain_group_manager.MerkleNode(r))
+              return ok(nodes)
+            else:
+              return err(res.error)
+
+        let fetchProof: onchain_group_manager.FetchProofCallback =
+          proc(index: onchain_group_manager.MembershipIndex): Future[Result[onchain_group_manager.ExternalMerkleProof, string]] {.async, gcsafe, raises: [].} =
+            let res = await clientFetchProof(mix_lez_client.MembershipIndex(index))
+            if res.isOk:
+              let p = res.get()
+              return ok(onchain_group_manager.ExternalMerkleProof(
+                pathElements: p.pathElements,
+                identityPathIndex: p.identityPathIndex,
+                root: onchain_group_manager.MerkleNode(p.root),
+              ))
+            else:
+              return err(res.error)
+
+        lezGm.setFetchCallbacks(fetchRoots, fetchProof)
+        # Store group manager ref so setRlnIdentity (from selfRegisterRln callback)
+        # can set credentials on it when registration completes
+        mix_lez_client.setGroupManagerRef(cast[pointer](lezGm))
+        info "Wired LEZ callbacks for mix RLN spam protection"
+
+        # Mount RLN gifter server if configured
+        if mixConf.gifterService:
+          let walletAccount = mixConf.gifterWalletAccount
+          let registerHandler: rln_gifter_protocol.RegisterMemberHandler =
+            proc(
+                idCommitment: string, rateLimit: uint64
+            ): Future[
+                Result[tuple[leafIndex: uint64, configAccountId: string], string]
+            ] {.async, gcsafe.} =
+              let (configAccount, _) = mix_lez_client.getRlnConfig()
+              if configAccount.len == 0:
+                return err("RLN config not set on gifter node")
+              let holdingAccount =
+                if walletAccount.len > 0: walletAccount else: configAccount
+              let params =
+                "{\"configAccountId\":\"" & configAccount &
+                "\",\"userHoldingAccountId\":\"" & holdingAccount &
+                "\",\"idCommitment\":\"" & idCommitment &
+                "\",\"rateLimit\":" & $rateLimit & "}"
+              let regResult = mix_lez_client.callRlnFetcher("register_member", params)
+              if regResult.isErr:
+                return err(regResult.error)
+              try:
+                let parsed = parseJson(regResult.get())
+                let leafIndex = parsed["leaf_index"].getInt().uint64
+                return ok((leafIndex: leafIndex, configAccountId: configAccount))
+              except CatchableError:
+                return err("failed to parse register_member result")
+
+          let gifter = rln_gifter_protocol.WakuRlnGifter.new(
+            node.peerManager, node.rng, registerHandler
+          )
+          node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
+          info "RLN gifter service mounted for mix"
+
+        # Gifter client registration is deferred to startNode() where the switch
+        # is fully running and the gifter service peer is reachable.
+        if mixConf.gifterNode.len > 0:
+          info "Gifter client mode: registration deferred to startNode()"
 
   # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():
@@ -467,6 +555,13 @@ proc startNode*(
   except CatchableError:
     return err("failed to start waku node: " & getCurrentExceptionMsg())
 
+  # Start deferred OnchainLEZ poll loop now that the switch is fully started.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      not node.wakuMix.isNil():
+    let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+    if gm of OnchainLEZGroupManager:
+      OnchainLEZGroupManager(gm).startPolling()
+
   # Connect to configured static nodes
   if conf.staticNodes.len > 0:
     try:
@@ -481,6 +576,58 @@ proc startNode*(
     except CatchableError:
       return
         err("failed to connect to dynamic bootstrap nodes: " & getCurrentExceptionMsg())
+
+  # RLN gifter client registration (deferred from setupProtocols to avoid FFI crash).
+  # Now the switch is running and the gifter service peer is reachable via static nodes.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      conf.mixConf.get().gifterNode.len > 0 and not node.wakuMix.isNil():
+    let mixConf = conf.mixConf.get()
+    let gm = node.wakuMix.mixRlnSpamProtection.groupManager
+    if gm of OnchainLEZGroupManager:
+      let lezGm = OnchainLEZGroupManager(gm)
+      let gifterClient = rln_gifter_client.WakuRlnGifterClient.new(
+        node.peerManager, node.rng
+      )
+      let gifterPeer = parsePeerInfo(mixConf.gifterNode).valueOr:
+        return err("failed to parse gifter peer: " & error)
+      node.peerManager.addServicePeer(gifterPeer, WakuRlnGifterCodec)
+
+      # Use keystore credentials if available, otherwise generate new ones
+      let idCred =
+        if lezGm.credentials.isSome:
+          lezGm.credentials.get()
+        else:
+          mix_rln_interface.membershipKeyGen().valueOr:
+            return err("failed to generate RLN identity: " & $error)
+      let idCommitmentHex = block:
+        var hex = ""
+        for b in idCred.idCommitment:
+          hex.add(toHex(int(b), 2))
+        hex
+
+      info "Registering via RLN gifter",
+        gifterPeer = mixConf.gifterNode,
+        idCommitment = idCommitmentHex[0 .. 15] & "...",
+        fromKeystore = lezGm.credentials.isSome
+
+      var regResult: tuple[leafIndex: uint64, configAccountId: string]
+      try:
+        let res = await gifterClient.requestMembership(
+          idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer
+        )
+        if res.isErr:
+          return err("failed to register via gifter: " & res.error)
+        regResult = res.get()
+      except CatchableError:
+        return err("gifter registration exception: " & getCurrentExceptionMsg())
+
+      lezGm.credentials = some(idCred)
+      lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(regResult.leafIndex))
+      mix_lez_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
+
+      info "Registered via RLN gifter",
+        leafIndex = regResult.leafIndex,
+        configAccount = regResult.configAccountId
 
   # retrieve px peers and add the to the peer store
   if conf.remotePeerExchangeNode.isSome():
@@ -505,6 +652,18 @@ proc startNode*(
     let minMixPeers = if conf.mixConf.isSome(): 4 else: 0
     (await node.wakuKademlia.start(minMixPeers = minMixPeers)).isOkOr:
       return err("failed to start kademlia discovery: " & error)
+
+  # Re-publish gossipsub trigger messages now that the switch is running and
+  # kademlia has bootstrapped.  In LEZ mode the dummy publish during
+  # WakuMix.start() fires before the switch is ready (0 peers on topic).
+  # Publishing again here ensures gossipsub SUBSCRIBE messages flow to peers,
+  # which triggers peer exchange and populates kademlia routing tables.
+  if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
+      not node.wakuMix.isNil():
+    try:
+      await node.wakuMix.publishGossipsubTrigger()
+    except CatchableError:
+      warn "gossipsub trigger publish failed", error = getCurrentExceptionMsg()
 
   return ok()
 

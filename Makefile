@@ -473,8 +473,8 @@ endif
 libwaku: | build deps librln
 	echo -e $(BUILD_MSG) "build/$@.$(LIB_EXT)" && $(ENV_SCRIPT) nim $(LIBWAKU_BUILD_COMMAND) $(NIM_PARAMS) waku.nims $@.$(LIB_EXT)
 
-liblogosdelivery: | build deps librln
-	echo -e $(BUILD_MSG) "build/$@.$(LIB_EXT)" && $(ENV_SCRIPT) nim $(LIBLOGOSDELIVERY_BUILD_COMMAND) $(NIM_PARAMS) waku.nims $@.$(LIB_EXT)
+liblogosdelivery: | build deps librln mix-librln
+	echo -e $(BUILD_MSG) "build/$@.$(LIB_EXT)" && $(ENV_SCRIPT) nim $(LIBLOGOSDELIVERY_BUILD_COMMAND) $(NIM_PARAMS) $(MIX_LIBRLN_NIM_PARAMS) waku.nims $@.$(LIB_EXT)
 
 logosdelivery_example: | build liblogosdelivery
 	@echo -e $(BUILD_MSG) "build/$@"
