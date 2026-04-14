@@ -355,7 +355,7 @@ proc makeFetchLatestRoots*(): FetchLatestRootsCallback =
     let (configAccount, _) = getRlnConfig()
     if configAccount.len == 0:
       return err("RLN config not set")
-    let rootsJson = callRlnFetcher("get_valid_roots", configAccount)
+    let rootsJson = await callRlnFetcherAsync("get_valid_roots", configAccount)
     if rootsJson.isErr:
       return err(rootsJson.error)
     let res = parseRootsJson(rootsJson.get())
@@ -377,7 +377,7 @@ proc makeFetchMerkleProof*(): FetchMerkleProofCallback =
     if configAccount.len == 0:
       return err("RLN config not set")
     let params = configAccount & "," & $index
-    let proofJson = callRlnFetcher("get_merkle_proofs", params)
+    let proofJson = await callRlnFetcherAsync("get_merkle_proofs", params)
     if proofJson.isErr:
       return err(proofJson.error)
     return parseExternalProof(proofJson.get())
