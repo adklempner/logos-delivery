@@ -407,8 +407,19 @@ proc readInput(wfd: AsyncFD) {.thread, raises: [Defect, CatchableError].} =
   let transp = fromPipe(wfd)
 
   while true:
-    let line = stdin.readLine()
-    discard waitFor transp.write(line & "\r\n")
+    var line: string
+    try:
+      line = stdin.readLine()
+    except EOFError:
+      stderr.writeLine("readInput: EOF on stdin")
+      break
+    stderr.writeLine("readInput: got line: " & line)
+    try:
+      discard waitFor transp.write(line & "\r\n")
+    except CatchableError as e:
+      stderr.writeLine("readInput: write failed: " & e.msg)
+      break
+    stderr.writeLine("readInput: wrote to pipe")
 
 var alreadyUsedServicePeers {.threadvar.}: seq[RemotePeerInfo]
 
