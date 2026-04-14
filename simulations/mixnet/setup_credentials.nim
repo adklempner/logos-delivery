@@ -1,14 +1,11 @@
 {.push raises: [].}
 
-## Setup script to generate RLN credentials and shared Merkle tree for mix nodes.
+## Generate RLN credentials for the mix simulation.
 ##
-## This script:
-## 1. Generates credentials for each node (identified by peer ID)
-## 2. Registers all credentials in a shared Merkle tree
-## 3. Saves the tree to rln_tree.db
-## 4. Saves individual keystores named by peer ID
-##
-## Usage: nim c -r setup_credentials.nim
+## 1. Generates identity credentials for each node (by peer ID)
+## 2. Builds a shared Merkle tree and saves to rln_tree.db (used by chat2mix)
+## 3. Saves individual keystores (used by logoscore nodes and chat2mix)
+## 4. Exports identity commitments to CSV (for on-chain registration via register_commitments)
 
 import std/[os, strformat, options], chronicles, chronos, results
 
@@ -139,13 +136,9 @@ proc setupCredentialsAndTree() {.async.} =
 
   echo ""
   echo "=== Setup Complete ==="
-  echo "  Tree file: rln_tree.db (", NodeConfigs.len, " members)"
-  echo "  Keystores: rln_keystore_{peerId}.json"
-  echo "  Password: ", KeystorePassword
-  echo "  Default rate limit: ", DefaultUserMessageLimit
-  echo "  Spammer rate limit: ", SpammerUserMessageLimit
-  echo ""
-  echo "Note: All nodes must use the same rln_tree.db file."
+  echo "  Tree file: rln_tree.db (used by chat2mix for off-chain proof generation)"
+  echo "  Keystores: rln_keystore_{peerId}.json (credentials for all nodes)"
+  echo "  Commitments CSV: rln_commitments.csv (for on-chain registration)"
 
 when isMainModule:
   waitFor setupCredentialsAndTree()

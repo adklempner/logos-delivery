@@ -213,8 +213,7 @@ proc setupProtocols(
               return err(res.error)
 
         lezGm.setFetchCallbacks(fetchRoots, fetchProof)
-        # Store group manager ref so setRlnIdentity (from selfRegisterRln callback)
-        # can set credentials on it when registration completes
+        # Store group manager ref for credential updates via setRlnIdentity
         mix_lez_client.setGroupManagerRef(cast[pointer](lezGm))
         info "Wired LEZ callbacks for mix RLN spam protection"
 
@@ -577,8 +576,7 @@ proc startNode*(
       return
         err("failed to connect to dynamic bootstrap nodes: " & getCurrentExceptionMsg())
 
-  # RLN gifter client registration (deferred from setupProtocols to avoid FFI crash).
-  # Now the switch is running and the gifter service peer is reachable via static nodes.
+  # RLN gifter client registration — runs after switch start so the gifter peer is reachable.
   if conf.mixConf.isSome() and conf.mixConf.get().useOnchainLEZ and
       conf.mixConf.get().gifterNode.len > 0 and not node.wakuMix.isNil():
     let mixConf = conf.mixConf.get()

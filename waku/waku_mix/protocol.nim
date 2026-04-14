@@ -101,8 +101,8 @@ proc new*(
   let peerId = peermgr.switch.peerInfo.peerId
   var spamProtectionConfig = defaultConfig()
   spamProtectionConfig.useOnchainLEZ = useOnchainLEZ
-  # Always load credentials from keystore (needed for per-hop proof generation).
-  # In LEZ mode, roots/proofs come from the on-chain tree, but credentials are local.
+  # Load identity credentials from keystore. In LEZ mode, roots/proofs are fetched
+  # from the on-chain tree via the RLN module; only the identity is local.
   spamProtectionConfig.keystorePath = "rln_keystore_" & $peerId & ".json"
   spamProtectionConfig.keystorePassword = "mix-rln-password"
   if userMessageLimit.isSome():
