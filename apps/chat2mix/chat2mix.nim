@@ -194,8 +194,6 @@ const MinMixNodePoolSize = 4
 #####################
 
 type
-  SelectResult*[T] = Result[T, string]
-
   Chat2Message* = object
     timestamp*: int64
     nick*: string

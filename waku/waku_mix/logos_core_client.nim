@@ -6,7 +6,7 @@
 ## The C++ delivery module registers an RLN fetcher at startup.
 ## Event-push caching provides fast access to roots/proofs.
 
-import std/[json, strutils, locks, algorithm, options]
+import std/[json, strutils, locks, options]
 import chronos, chronos/threadsync
 import results
 import chronicles
@@ -46,7 +46,7 @@ var
   rlnConfigAccountId: string
   rlnLeafIndex: int = -1
   rlnIdentitySecretHash: string
-  rlnGroupManager: pointer  # Stores ref to OnchainLEZGroupManager for deferred identity setting
+  rlnGroupManager: GroupManager
   cachedRootsJson: string
   cachedProofJson: string
 
@@ -66,7 +66,7 @@ proc setRlnConfig*(configAccountId: string, leafIndex: int) {.gcsafe.} =
     rlnLeafIndex = leafIndex
     rlnFetcherLock.release()
 
-proc setGroupManagerRef*(gm: pointer) {.gcsafe.} =
+proc setGroupManagerRef*(gm: GroupManager) {.gcsafe.} =
   ## Store a reference to the OnchainLEZGroupManager so setRlnIdentity can
   ## set credentials on it when they arrive from selfRegisterRln.
   {.gcsafe.}:
@@ -104,19 +104,12 @@ proc setRlnIdentity*(idSecretHashHex: string) {.gcsafe.} =
         warn "Failed to regenerate full credential from seed", error = $error
         return
 
-      let gmRef = cast[GroupManager](gm)
-      gmRef.credentials = some(cred)
+      gm.credentials = some(cred)
       if leafIdx >= 0:
-        gmRef.membershipIndex = some(types.MembershipIndex(leafIdx))
+        gm.membershipIndex = some(types.MembershipIndex(leafIdx))
       info "Set full RLN identity on group manager",
         leafIndex = leafIdx,
         commitment = cred.idCommitment[0 .. 7].toHex() & "..."
-
-proc getRlnIdentity*(): string {.gcsafe.} =
-  {.gcsafe.}:
-    rlnFetcherLock.acquire()
-    result = rlnIdentitySecretHash
-    rlnFetcherLock.release()
 
 proc getRlnConfig*(): (string, int) {.gcsafe.} =
   {.gcsafe.}:
@@ -188,25 +181,6 @@ proc callRlnFetcher*(methodName: string, params: string): Result[string, string]
     if fetchResult.json.len == 0:
       return err("RLN fetcher returned empty response")
     return ok(fetchResult.json)
-
-type
-  RegisterMemberFunc* = proc(
-    paramsJson: cstring,
-    callback: RlnFetchCallback,
-    callbackData: pointer,
-    fetcherData: pointer
-  ): cint {.cdecl, gcsafe, raises: [].}
-
-var
-  registerMemberFunc: RegisterMemberFunc
-  registerMemberData: pointer
-
-proc setRegisterMemberFunc*(f: RegisterMemberFunc, data: pointer) {.gcsafe.} =
-  {.gcsafe.}:
-    rlnFetcherLock.acquire()
-    registerMemberFunc = f
-    registerMemberData = data
-    rlnFetcherLock.release()
 
 type ThreadArgs = object
   fetcher: RlnFetcherFunc
@@ -295,16 +269,6 @@ proc hexToBytes32(hex: string): Result[array[32, byte], string] =
     except ValueError:
       return err("Invalid hex at position " & $i)
   ok(output)
-
-proc hexToBytes32LE(hex: string): Result[array[32, byte], string] =
-  ## Parse hex string to bytes in little-endian order (for zerokit field elements).
-  ## LEZ/Ethereum return big-endian hex; zerokit expects LE internally.
-  var res = hexToBytes32(hex).valueOr:
-    return err(error)
-  var reversed: array[32, byte]
-  for i in 0 ..< 32:
-    reversed[i] = res[31 - i]
-  ok(reversed)
 
 proc parseRootsJson*(snapshot: string): Result[seq[MerkleNode], string] =
   if snapshot.len == 0:

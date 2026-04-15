@@ -18,7 +18,6 @@ import
 const
   KeystorePassword = "mix-rln-password" # Must match protocol.nim
   DefaultUserMessageLimit = 100'u64 # Network-wide default rate limit
-  SpammerUserMessageLimit = 3'u64 # Lower limit for spammer testing
 
   # Peer IDs derived from nodekeys in config files
   # config.toml:   nodekey = "f98e3fba96c32e8d1967d460f1b79457380e1a895f7971cecc8528abe733781a"

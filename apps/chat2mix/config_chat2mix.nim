@@ -1,4 +1,4 @@
-import chronicles, chronos, std/strutils, regex
+import chronicles, std/strutils
 
 import
   eth/keys,
@@ -19,8 +19,6 @@ type
     none
     sandbox
     test
-
-  EthRpcUrl* = distinct string
 
   Chat2Conf* = object ## General node config
     edgemode* {.
@@ -289,38 +287,6 @@ proc parseCmdArg*(T: type Port, p: string): T =
 
 proc completeCmdArg*(T: type Port, val: string): seq[string] =
   return @[]
-
-proc parseCmdArg*(T: type Option[uint], p: string): T =
-  try:
-    some(parseUint(p))
-  except CatchableError:
-    raise newException(ValueError, "Invalid unsigned integer")
-
-proc completeCmdArg*(T: type EthRpcUrl, val: string): seq[string] =
-  return @[]
-
-proc parseCmdArg*(T: type EthRpcUrl, s: string): T =
-  ## allowed patterns:
-  ## http://url:port
-  ## https://url:port
-  ## http://url:port/path
-  ## https://url:port/path
-  ## http://url/with/path
-  ## http://url:port/path?query
-  ## https://url:port/path?query
-  ## disallowed patterns:
-  ## any valid/invalid ws or wss url
-  var httpPattern =
-    re2"^(https?):\/\/((localhost)|([\w_-]+(?:(?:\.[\w_-]+)+)))(:[0-9]{1,5})?([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])*"
-  var wsPattern =
-    re2"^(wss?):\/\/((localhost)|([\w_-]+(?:(?:\.[\w_-]+)+)))(:[0-9]{1,5})?([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])*"
-  if regex.match(s, wsPattern):
-    raise newException(
-      ValueError, "Websocket RPC URL is not supported, Please use an HTTP URL"
-    )
-  if not regex.match(s, httpPattern):
-    raise newException(ValueError, "Invalid HTTP RPC URL")
-  return EthRpcUrl(s)
 
 func defaultListenAddress*(conf: Chat2Conf): IpAddress =
   # TODO: How should we select between IPv4 and IPv6

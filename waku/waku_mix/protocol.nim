@@ -207,31 +207,6 @@ proc getSpamProtectionContentTopics*(mix: WakuMix): seq[string] =
     return @[]
   return mix.mixRlnSpamProtection.getContentTopics()
 
-proc saveSpamProtectionTree*(mix: WakuMix): Result[void, string] =
-  ## Save the spam protection membership tree to disk.
-  ## This allows preserving the tree state across restarts.
-  if mix.mixRlnSpamProtection.isNil():
-    return err("Spam protection not initialized")
-
-  mix.mixRlnSpamProtection.saveTree().mapErr(
-    proc(e: string): string =
-      e
-  )
-
-proc loadSpamProtectionTree*(mix: WakuMix): Result[void, string] =
-  ## Load the spam protection membership tree from disk.
-  ## Call this before init() to restore tree state from previous runs.
-  ## TODO: This is a temporary solution. Ideally nodes should sync tree state
-  ## via a store query for historical membership messages or via dedicated
-  ## tree sync protocol.
-  if mix.mixRlnSpamProtection.isNil():
-    return err("Spam protection not initialized")
-
-  mix.mixRlnSpamProtection.loadTree().mapErr(
-    proc(e: string): string =
-      e
-  )
-
 method start*(mix: WakuMix) {.async.} =
   info "starting waku mix protocol"
 

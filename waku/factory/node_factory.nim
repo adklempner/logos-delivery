@@ -214,7 +214,7 @@ proc setupProtocols(
 
         lezGm.setFetchCallbacks(fetchRoots, fetchProof)
         # Store group manager ref for credential updates via setRlnIdentity
-        mix_lez_client.setGroupManagerRef(cast[pointer](lezGm))
+        mix_lez_client.setGroupManagerRef(lezGm)
         info "Wired LEZ callbacks for mix RLN spam protection"
 
         # Mount RLN gifter server if configured
