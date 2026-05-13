@@ -7,14 +7,31 @@ import waku/waku_rln_relay/rln_gifter/rpc
 import waku/waku_rln_relay/rln_gifter/rpc_codec
 import waku/waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol
 
-proc eip191Sign(seckey: PrivateKey, idCommitmentHex: string): seq[byte] =
-  @(seckey.sign(eip191Message(idCommitmentHex)).toRaw())
+proc eip191Sign(seckey: PrivateKey, idCommitment: openArray[byte]): seq[byte] =
+  @(seckey.sign(eip191Message(idCommitment)).toRaw())
+
+proc bytesOf(s: string): seq[byte] =
+  result = newSeqOfCap[byte](s.len)
+  for c in s:
+    result.add(byte(c))
 
 const
   TestSecretHex =
     "1111111111111111111111111111111111111111111111111111111111111111"
-  TestCommitment =
-    "abababababababababababababababababababababababababababababababab"
+
+let TestCommitment = @[
+  byte 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+  0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+  0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+  0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab, 0xab,
+]
+
+let TamperedCommitment = @[
+  byte 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd,
+  0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd,
+  0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd,
+  0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd, 0xcd,
+]
 
 suite "RLN gifter EIP-191 auth":
   test "verifyEip191 recovers the signer address":
@@ -35,9 +52,7 @@ suite "RLN gifter EIP-191 auth":
     let expected = sk.toPublicKey().to(Address)
     let sig = eip191Sign(sk, TestCommitment)
 
-    let tampered =
-      "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-    let recovered = verifyEip191(tampered, sig).expect("recoverable")
+    let recovered = verifyEip191(TamperedCommitment, sig).expect("recoverable")
     check recovered != expected
 
   test "verifyEip191 rejects malformed signature bytes":
@@ -46,32 +61,76 @@ suite "RLN gifter EIP-191 auth":
     check res.isErr
 
 suite "RLN gifter request codec":
-  test "round-trips authPayload when present":
-    let payload = @[byte 0xde, 0xad, 0xbe, 0xef]
+  test "round-trips all fields when populated":
     let req = RlnGifterRequest(
       requestId: "req-1",
-      idCommitment: TestCommitment,
-      rateLimit: 42'u64,
-      authPayload: some(payload),
+      authenticationType: bytesOf("eth-allowlist"),
+      authenticationPayload: @[byte 0xde, 0xad, 0xbe, 0xef],
+      identityCommitment: TestCommitment,
+      rateLimit: some(42'u64),
     )
     let decoded = RlnGifterRequest.decode(req.encode().buffer).expect("decodes")
     check:
       decoded.requestId == "req-1"
-      decoded.idCommitment == TestCommitment
-      decoded.rateLimit == 42'u64
-      decoded.authPayload.isSome
-      decoded.authPayload.get() == payload
+      decoded.authenticationType == bytesOf("eth-allowlist")
+      decoded.authenticationPayload == @[byte 0xde, 0xad, 0xbe, 0xef]
+      decoded.identityCommitment == TestCommitment
+      decoded.rateLimit == some(42'u64)
 
-  test "round-trips with authPayload absent (backward compat)":
+  test "rate_limit is optional on the wire":
     let req = RlnGifterRequest(
       requestId: "req-2",
-      idCommitment: TestCommitment,
-      rateLimit: 7'u64,
-      authPayload: none(seq[byte]),
+      authenticationType: @[],
+      authenticationPayload: @[],
+      identityCommitment: TestCommitment,
+      rateLimit: none(uint64),
     )
     let decoded = RlnGifterRequest.decode(req.encode().buffer).expect("decodes")
     check:
       decoded.requestId == "req-2"
-      decoded.idCommitment == TestCommitment
-      decoded.rateLimit == 7'u64
-      decoded.authPayload.isNone
+      decoded.identityCommitment == TestCommitment
+      decoded.rateLimit.isNone
+
+suite "RLN gifter response codec":
+  test "encodes/decodes a success result":
+    let resp = RlnGifterResponse(
+      requestId: "req-1",
+      authSuccess: true,
+      error: none(string),
+      success: some(MembershipAllocationSuccess(
+        leafIndex: 7'u64,
+        merkleRoot: @[byte 0x01, 0x02, 0x03],
+        blockNumber: 42'u64,
+        transactionHash: @[byte 0xaa, 0xbb],
+        configAccountId: some("acct-123"),
+      )),
+      failure: none(MembershipAllocationFailure),
+    )
+    let decoded = RlnGifterResponse.decode(resp.encode().buffer).expect("decodes")
+    check:
+      decoded.requestId == "req-1"
+      decoded.authSuccess == true
+      decoded.success.isSome
+      decoded.success.get().leafIndex == 7'u64
+      decoded.success.get().merkleRoot == @[byte 0x01, 0x02, 0x03]
+      decoded.success.get().blockNumber == 42'u64
+      decoded.success.get().transactionHash == @[byte 0xaa, 0xbb]
+      decoded.success.get().configAccountId == some("acct-123")
+      decoded.failure.isNone
+
+  test "encodes/decodes a failure result":
+    let resp = RlnGifterResponse(
+      requestId: "req-2",
+      authSuccess: false,
+      error: some("address not allowlisted"),
+      success: none(MembershipAllocationSuccess),
+      failure: some(MembershipAllocationFailure(errorMessage: "address not allowlisted")),
+    )
+    let decoded = RlnGifterResponse.decode(resp.encode().buffer).expect("decodes")
+    check:
+      decoded.requestId == "req-2"
+      decoded.authSuccess == false
+      decoded.error == some("address not allowlisted")
+      decoded.failure.isSome
+      decoded.failure.get().errorMessage == "address not allowlisted"
+      decoded.success.isNone

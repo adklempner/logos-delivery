@@ -1,27 +1,32 @@
 import std/options
 
 type
-  RlnGifterStatusCode* = distinct uint32
+  MembershipAllocationSuccess* = object
+    leafIndex*: uint64
+    merkleRoot*: seq[byte]
+    blockNumber*: uint64
+    transactionHash*: seq[byte]
+    # Extension (non-spec, high tag in the codec): the logos-LEZ config
+    # account that owns the registered membership. Required by the LEZ-backed
+    # RLN client to point subsequent on-chain queries at the right account.
+    configAccountId*: Option[string]
+
+  MembershipAllocationFailure* = object
+    errorMessage*: string
 
   RlnGifterRequest* = object
     requestId*: string
-    idCommitment*: string # hex-encoded 32-byte commitment
-    rateLimit*: uint64
-    authPayload*: Option[seq[byte]] # opaque auth blob; format depends on the auth mechanism
+    authenticationType*: seq[byte]
+    authenticationPayload*: seq[byte]
+    identityCommitment*: seq[byte]
+    rateLimit*: Option[uint64]
 
   RlnGifterResponse* = object
     requestId*: string
-    statusCode*: RlnGifterStatusCode
-    statusDesc*: Option[string]
-    leafIndex*: Option[uint64]
-    configAccountId*: Option[string]
+    authSuccess*: bool
+    error*: Option[string]
+    success*: Option[MembershipAllocationSuccess]
+    failure*: Option[MembershipAllocationFailure]
 
 const
-  RlnGifterSuccess* = RlnGifterStatusCode(200)
-  RlnGifterBadRequest* = RlnGifterStatusCode(400)
-  RlnGifterUnauthorized* = RlnGifterStatusCode(401)
-  RlnGifterRateLimited* = RlnGifterStatusCode(429)
-  RlnGifterInternalError* = RlnGifterStatusCode(500)
-  RlnGifterRegistrationFailed* = RlnGifterStatusCode(502)
-
-proc `==`*(a, b: RlnGifterStatusCode): bool {.borrow.}
+  EthAllowlistAuthType* = "eth-allowlist"

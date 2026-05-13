@@ -5,13 +5,65 @@ import ../../common/protobuf, ./rpc
 
 const DefaultMaxRpcSize* = 4096
 
+proc encode*(rpc: MembershipAllocationSuccess): ProtoBuffer =
+  var pb = initProtoBuffer()
+  pb.write3(1, rpc.leafIndex)
+  pb.write3(2, rpc.merkleRoot)
+  pb.write3(3, rpc.blockNumber)
+  pb.write3(4, rpc.transactionHash)
+  if rpc.configAccountId.isSome:
+    pb.write3(100, rpc.configAccountId.get())
+  pb.finish3()
+  return pb
+
+proc decode*(T: type MembershipAllocationSuccess, buffer: seq[byte]): ProtobufResult[T] =
+  let pb = initProtoBuffer(buffer)
+  var msg = MembershipAllocationSuccess()
+
+  var leafIndex: uint64
+  if ?pb.getField(1, leafIndex):
+    msg.leafIndex = leafIndex
+
+  var merkleRoot: seq[byte]
+  if ?pb.getField(2, merkleRoot):
+    msg.merkleRoot = merkleRoot
+
+  var blockNumber: uint64
+  if ?pb.getField(3, blockNumber):
+    msg.blockNumber = blockNumber
+
+  var transactionHash: seq[byte]
+  if ?pb.getField(4, transactionHash):
+    msg.transactionHash = transactionHash
+
+  var configAccountId: string
+  if ?pb.getField(100, configAccountId):
+    msg.configAccountId = some(configAccountId)
+
+  return ok(msg)
+
+proc encode*(rpc: MembershipAllocationFailure): ProtoBuffer =
+  var pb = initProtoBuffer()
+  pb.write3(1, rpc.errorMessage)
+  pb.finish3()
+  return pb
+
+proc decode*(T: type MembershipAllocationFailure, buffer: seq[byte]): ProtobufResult[T] =
+  let pb = initProtoBuffer(buffer)
+  var msg = MembershipAllocationFailure()
+  var errorMessage: string
+  if ?pb.getField(1, errorMessage):
+    msg.errorMessage = errorMessage
+  return ok(msg)
+
 proc encode*(rpc: RlnGifterRequest): ProtoBuffer =
   var pb = initProtoBuffer()
   pb.write3(1, rpc.requestId)
-  pb.write3(2, rpc.idCommitment)
-  pb.write3(3, rpc.rateLimit)
-  if rpc.authPayload.isSome:
-    pb.write3(4, rpc.authPayload.get())
+  pb.write3(2, rpc.authenticationType)
+  pb.write3(3, rpc.authenticationPayload)
+  pb.write3(4, rpc.identityCommitment)
+  if rpc.rateLimit.isSome:
+    pb.write3(5, rpc.rateLimit.get())
   pb.finish3()
   return pb
 
@@ -24,30 +76,35 @@ proc decode*(T: type RlnGifterRequest, buffer: seq[byte]): ProtobufResult[T] =
     return err(ProtobufError.missingRequiredField("request_id"))
   rpc.requestId = requestId
 
-  var idCommitment: string
-  if not ?pb.getField(2, idCommitment):
-    return err(ProtobufError.missingRequiredField("id_commitment"))
-  rpc.idCommitment = idCommitment
+  var authenticationType: seq[byte]
+  discard ?pb.getField(2, authenticationType)
+  rpc.authenticationType = authenticationType
+
+  var authenticationPayload: seq[byte]
+  discard ?pb.getField(3, authenticationPayload)
+  rpc.authenticationPayload = authenticationPayload
+
+  var identityCommitment: seq[byte]
+  if not ?pb.getField(4, identityCommitment):
+    return err(ProtobufError.missingRequiredField("identity_commitment"))
+  rpc.identityCommitment = identityCommitment
 
   var rateLimit: uint64
-  if not ?pb.getField(3, rateLimit):
-    rpc.rateLimit = 100 # default
-  else:
-    rpc.rateLimit = rateLimit
-
-  var authPayload: seq[byte]
-  if ?pb.getField(4, authPayload):
-    rpc.authPayload = some(authPayload)
+  if ?pb.getField(5, rateLimit):
+    rpc.rateLimit = some(rateLimit)
 
   return ok(rpc)
 
 proc encode*(rpc: RlnGifterResponse): ProtoBuffer =
   var pb = initProtoBuffer()
   pb.write3(1, rpc.requestId)
-  pb.write3(10, rpc.statusCode.uint32)
-  pb.write3(11, rpc.statusDesc)
-  pb.write3(12, rpc.leafIndex)
-  pb.write3(13, rpc.configAccountId)
+  pb.write3(2, rpc.authSuccess)
+  if rpc.error.isSome:
+    pb.write3(3, rpc.error.get())
+  if rpc.success.isSome:
+    pb.write3(4, rpc.success.get().encode().buffer)
+  if rpc.failure.isSome:
+    pb.write3(5, rpc.failure.get().encode().buffer)
   pb.finish3()
   return pb
 
@@ -60,21 +117,21 @@ proc decode*(T: type RlnGifterResponse, buffer: seq[byte]): ProtobufResult[T] =
     return err(ProtobufError.missingRequiredField("request_id"))
   rpc.requestId = requestId
 
-  var statusCode: uint32
-  if not ?pb.getField(10, statusCode):
-    return err(ProtobufError.missingRequiredField("status_code"))
-  rpc.statusCode = RlnGifterStatusCode(statusCode)
+  var authSuccess: bool
+  if not ?pb.getField(2, authSuccess):
+    return err(ProtobufError.missingRequiredField("auth_success"))
+  rpc.authSuccess = authSuccess
 
-  var statusDesc: string
-  if ?pb.getField(11, statusDesc):
-    rpc.statusDesc = some(statusDesc)
+  var error: string
+  if ?pb.getField(3, error):
+    rpc.error = some(error)
 
-  var leafIndex: uint64
-  if ?pb.getField(12, leafIndex):
-    rpc.leafIndex = some(leafIndex)
+  var successBuf: seq[byte]
+  if ?pb.getField(4, successBuf):
+    rpc.success = some(?MembershipAllocationSuccess.decode(successBuf))
 
-  var configAccountId: string
-  if ?pb.getField(13, configAccountId):
-    rpc.configAccountId = some(configAccountId)
+  var failureBuf: seq[byte]
+  if ?pb.getField(5, failureBuf):
+    rpc.failure = some(?MembershipAllocationFailure.decode(failureBuf))
 
   return ok(rpc)

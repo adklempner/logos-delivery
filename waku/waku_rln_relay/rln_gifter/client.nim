@@ -13,7 +13,7 @@ logScope:
   topics = "waku rln-gifter client"
 
 type
-  RlnGifterResult* = Result[tuple[leafIndex: uint64, configAccountId: string], string]
+  RlnGifterResult* = Result[MembershipAllocationSuccess, string]
 
   WakuRlnGifterClient* = ref object
     rng*: ref rand.HmacDrbgContext
@@ -26,21 +26,23 @@ proc new*(
 
 proc requestMembership*(
     wc: WakuRlnGifterClient,
-    idCommitment: string,
-    rateLimit: uint64,
+    identityCommitment: seq[byte],
+    rateLimit: Option[uint64],
     peer: RemotePeerInfo,
-    authPayload: Option[seq[byte]] = none(seq[byte]),
+    authenticationType: seq[byte] = @[],
+    authenticationPayload: seq[byte] = @[],
 ): Future[RlnGifterResult] {.async.} =
   let request = RlnGifterRequest(
     requestId: generateRequestId(wc.rng),
-    idCommitment: idCommitment,
+    authenticationType: authenticationType,
+    authenticationPayload: authenticationPayload,
+    identityCommitment: identityCommitment,
     rateLimit: rateLimit,
-    authPayload: authPayload,
   )
 
   info "requesting RLN membership from gifter",
     requestId = request.requestId,
-    idCommitment = idCommitment[0 .. min(15, idCommitment.len - 1)] & "..."
+    identityCommitmentLen = identityCommitment.len
 
   # Retry dial with backoff (gifter node may still be initializing)
   var connection: Connection
@@ -77,18 +79,19 @@ proc requestMembership*(
   if response.requestId != request.requestId:
     return err("requestId mismatch")
 
-  if response.statusCode != RlnGifterSuccess:
-    let desc = response.statusDesc.get("unknown error")
-    return err("gifter returned error " & $response.statusCode.uint32 & ": " & desc)
+  if not response.authSuccess:
+    let desc = response.error.get(
+      if response.failure.isSome: response.failure.get().errorMessage
+      else: "authentication failed"
+    )
+    return err("authentication failed: " & desc)
 
-  let leafIndex = response.leafIndex.valueOr:
-    return err("response missing leaf_index")
+  if response.failure.isSome:
+    return err("registration failed: " & response.failure.get().errorMessage)
 
-  let configAccountId = response.configAccountId.valueOr:
-    return err("response missing config_account_id")
+  let success = response.success.valueOr:
+    return err("response missing success/failure result")
 
-  info "RLN membership granted",
-    leafIndex = leafIndex,
-    configAccountId = configAccountId[0 .. min(15, configAccountId.len - 1)] & "..."
+  info "RLN membership granted", leafIndex = success.leafIndex
 
-  return ok((leafIndex: leafIndex, configAccountId: configAccountId))
+  return ok(success)

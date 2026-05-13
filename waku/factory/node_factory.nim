@@ -223,19 +223,20 @@ proc setupProtocols(
           let walletAccount = mixConf.gifterWalletAccount
           let registerHandler: rln_gifter_protocol.RegisterMemberHandler =
             proc(
-                idCommitment: string, rateLimit: uint64
-            ): Future[
-                Result[tuple[leafIndex: uint64, configAccountId: string], string]
-            ] {.async, gcsafe.} =
+                identityCommitment: seq[byte], rateLimit: uint64
+            ): Future[Result[rln_gifter_protocol.MembershipAllocationSuccess, string]] {.async, gcsafe.} =
               let (configAccount, _) = mix_lez_client.getRlnConfig()
               if configAccount.len == 0:
                 return err("RLN config not set on gifter node")
               let holdingAccount =
                 if walletAccount.len > 0: walletAccount else: configAccount
+              var idCommitmentHex = newStringOfCap(identityCommitment.len * 2)
+              for b in identityCommitment:
+                idCommitmentHex.add(toHex(int(b), 2))
               let params =
                 "{\"configAccountId\":\"" & configAccount &
                 "\",\"userHoldingAccountId\":\"" & holdingAccount &
-                "\",\"idCommitment\":\"" & idCommitment &
+                "\",\"idCommitment\":\"" & idCommitmentHex &
                 "\",\"rateLimit\":" & $rateLimit & "}"
               let regResult = mix_lez_client.callRlnFetcher("register_member", params)
               if regResult.isErr:
@@ -243,7 +244,10 @@ proc setupProtocols(
               try:
                 let parsed = parseJson(regResult.get())
                 let leafIndex = parsed["leaf_index"].getInt().uint64
-                return ok((leafIndex: leafIndex, configAccountId: configAccount))
+                return ok(rln_gifter_protocol.MembershipAllocationSuccess(
+                  leafIndex: leafIndex,
+                  configAccountId: some(configAccount),
+                ))
               except CatchableError:
                 return err("failed to parse register_member result")
 
@@ -617,44 +621,50 @@ proc startNode*(
         else:
           mix_rln_interface.membershipKeyGen().valueOr:
             return err("failed to generate RLN identity: " & $error)
-      let idCommitmentHex = block:
-        var hex = ""
-        for b in idCred.idCommitment:
-          hex.add(toHex(int(b), 2))
-        hex
+      let idCommitmentBytes = @(idCred.idCommitment)
 
       info "Registering via RLN gifter",
         gifterPeer = mixConf.gifterNode,
-        idCommitment = idCommitmentHex[0 .. 15] & "...",
+        identityCommitmentLen = idCommitmentBytes.len,
         fromKeystore = lezGm.credentials.isSome
 
-      var authPayload = none(seq[byte])
+      var authType: seq[byte]
+      var authPayload: seq[byte]
       if mixConf.gifterAuthKey.len > 0:
         let seckey = PrivateKey.fromHex(mixConf.gifterAuthKey).valueOr:
           return err("invalid mix-gifter-auth-key: " & $error)
-        let sig = seckey.sign(rln_gifter_protocol.eip191Message(idCommitmentHex))
-        authPayload = some(@(sig.toRaw()))
+        let sig = seckey.sign(rln_gifter_protocol.eip191Message(idCommitmentBytes))
+        authPayload = @(sig.toRaw())
+        for c in rln_gifter_protocol.EthAllowlistAuthType:
+          authType.add(byte(c))
         info "Signing gifter request with EIP-191 auth key",
           signer = seckey.toPublicKey().to(Address).to0xHex()
 
-      var regResult: tuple[leafIndex: uint64, configAccountId: string]
+      var success: rln_gifter_protocol.MembershipAllocationSuccess
       try:
         let res = await gifterClient.requestMembership(
-          idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer, authPayload
+          idCommitmentBytes,
+          some(uint64(lezGm.userMessageLimit)),
+          gifterPeer,
+          authType,
+          authPayload,
         )
         if res.isErr:
           return err("failed to register via gifter: " & res.error)
-        regResult = res.get()
+        success = res.get()
       except CatchableError:
         return err("gifter registration exception: " & getCurrentExceptionMsg())
 
+      let configAccountId = success.configAccountId.valueOr:
+        return err("gifter response missing configAccountId extension")
+
       lezGm.credentials = some(idCred)
-      lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(regResult.leafIndex))
-      mix_lez_client.setRlnConfig(regResult.configAccountId, regResult.leafIndex.int)
+      lezGm.membershipIndex = some(onchain_group_manager.MembershipIndex(success.leafIndex))
+      mix_lez_client.setRlnConfig(configAccountId, success.leafIndex.int)
 
       info "Registered via RLN gifter",
-        leafIndex = regResult.leafIndex,
-        configAccount = regResult.configAccountId
+        leafIndex = success.leafIndex,
+        configAccount = configAccountId
 
   # retrieve px peers and add the to the peer store
   if conf.remotePeerExchangeNode.isSome():

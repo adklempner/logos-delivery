@@ -12,16 +12,15 @@ import
   ../../waku_core,
   ./rpc,
   ./rpc_codec
+export rpc
 
 logScope:
   topics = "waku rln-gifter"
 
 type
   RegisterMemberHandler* = proc(
-    idCommitment: string, rateLimit: uint64
-  ): Future[Result[tuple[leafIndex: uint64, configAccountId: string], string]] {.
-    async, gcsafe
-  .}
+    identityCommitment: seq[byte], rateLimit: uint64
+  ): Future[Result[MembershipAllocationSuccess, string]] {.async, gcsafe.}
 
   EthAllowlistAuth* = ref object
     addresses*: HashSet[Address]
@@ -33,98 +32,116 @@ type
     registerHandler*: RegisterMemberHandler
     auth*: Option[EthAllowlistAuth]
 
-proc eip191Message*(idCommitmentHex: string): seq[byte] =
-  let prefix = "\x19Ethereum Signed Message:\n" & $idCommitmentHex.len
-  result = newSeqOfCap[byte](prefix.len + idCommitmentHex.len)
+proc toHexLower(b: openArray[byte]): string =
+  result = newStringOfCap(b.len * 2)
+  const digits = "0123456789abcdef"
+  for x in b:
+    result.add(digits[int(x shr 4)])
+    result.add(digits[int(x and 0x0f)])
+
+proc eip191Message*(idCommitment: openArray[byte]): seq[byte] =
+  ## The EIP-191 personal_sign envelope wraps the lowercase hex representation
+  ## of the 32-byte identity commitment. Hex is used (rather than raw bytes)
+  ## so the signed message is human-readable in wallets that surface it.
+  let hex = toHexLower(idCommitment)
+  let prefix = "\x19Ethereum Signed Message:\n" & $hex.len
+  result = newSeqOfCap[byte](prefix.len + hex.len)
   for c in prefix:
     result.add(byte(c))
-  for c in idCommitmentHex:
+  for c in hex:
     result.add(byte(c))
 
 proc verifyEip191*(
-    idCommitmentHex: string, sigBytes: openArray[byte]
+    idCommitment: openArray[byte], sigBytes: openArray[byte]
 ): Result[Address, string] =
   if sigBytes.len != 65:
     return err("signature must be 65 bytes, got " & $sigBytes.len)
   let sig = Signature.fromRaw(sigBytes).valueOr:
     return err("invalid signature encoding: " & $error)
-  let pub = sig.recover(eip191Message(idCommitmentHex)).valueOr:
+  let pub = sig.recover(eip191Message(idCommitment)).valueOr:
     return err("signature recovery failed: " & $error)
   ok(pub.to(Address))
+
+proc failureResponse(
+    requestId: string, authSuccess: bool, message: string
+): RlnGifterResponse =
+  RlnGifterResponse(
+    requestId: requestId,
+    authSuccess: authSuccess,
+    error: some(message),
+    failure: some(MembershipAllocationFailure(errorMessage: message)),
+  )
 
 proc handleRequest(
     wg: WakuRlnGifter, peerId: PeerId, buffer: seq[byte]
 ): Future[RlnGifterResponse] {.async.} =
   let request = RlnGifterRequest.decode(buffer).valueOr:
     error "failed to decode RLN gifter request", error = $error
-    return RlnGifterResponse(
-      requestId: "N/A",
-      statusCode: RlnGifterBadRequest,
-      statusDesc: some("decode error: " & $error),
-    )
+    return failureResponse("N/A", false, "decode error: " & $error)
 
   info "handling RLN gifter request",
     peerId = peerId,
     requestId = request.requestId,
-    idCommitment = request.idCommitment[0 .. min(15, request.idCommitment.len - 1)] & "..."
+    identityCommitment = toHexLower(request.identityCommitment)[0 .. min(15, request.identityCommitment.len * 2 - 1)] & "..."
 
-  if request.idCommitment.len != 64:
-    return RlnGifterResponse(
-      requestId: request.requestId,
-      statusCode: RlnGifterBadRequest,
-      statusDesc: some("idCommitment must be 64 hex chars"),
+  if request.identityCommitment.len != 32:
+    return failureResponse(
+      request.requestId, true, "identity_commitment must be 32 bytes"
     )
 
   var authorizedSigner: Option[Address]
   if wg.auth.isSome:
     let auth = wg.auth.get()
-    let payloadOpt = request.authPayload
-    if payloadOpt.isNone:
-      return RlnGifterResponse(
-        requestId: request.requestId,
-        statusCode: RlnGifterUnauthorized,
-        statusDesc: some("missing auth payload"),
+    let authType =
+      block:
+        var s = newStringOfCap(request.authenticationType.len)
+        for b in request.authenticationType: s.add(char(b))
+        s
+    if authType != EthAllowlistAuthType:
+      return failureResponse(
+        request.requestId, false,
+        "unsupported authentication_type: '" & authType & "'",
       )
-    let signer = verifyEip191(request.idCommitment, payloadOpt.get()).valueOr:
-      return RlnGifterResponse(
-        requestId: request.requestId,
-        statusCode: RlnGifterUnauthorized,
-        statusDesc: some("signature verification failed: " & error),
+    if request.authenticationPayload.len == 0:
+      return failureResponse(
+        request.requestId, false, "missing authentication_payload"
+      )
+    let signer = verifyEip191(
+      request.identityCommitment, request.authenticationPayload
+    ).valueOr:
+      return failureResponse(
+        request.requestId, false, "signature verification failed: " & error
       )
     if signer notin auth.addresses:
-      return RlnGifterResponse(
-        requestId: request.requestId,
-        statusCode: RlnGifterUnauthorized,
-        statusDesc: some("address not allowlisted: " & signer.to0xHex()),
+      return failureResponse(
+        request.requestId, false, "address not allowlisted: " & signer.to0xHex()
       )
     if signer in auth.consumed:
-      return RlnGifterResponse(
-        requestId: request.requestId,
-        statusCode: RlnGifterUnauthorized,
-        statusDesc: some("address already used: " & signer.to0xHex()),
+      return failureResponse(
+        request.requestId, false, "address already used: " & signer.to0xHex()
       )
     authorizedSigner = some(signer)
 
-  let regResult = (await wg.registerHandler(request.idCommitment, request.rateLimit)).valueOr:
+  let effectiveRateLimit = request.rateLimit.get(100'u64)
+  let success = (await wg.registerHandler(request.identityCommitment, effectiveRateLimit)).valueOr:
     error "RLN gifter registration failed", error = error
     return RlnGifterResponse(
       requestId: request.requestId,
-      statusCode: RlnGifterRegistrationFailed,
-      statusDesc: some(error),
+      authSuccess: true,
+      failure: some(MembershipAllocationFailure(errorMessage: error)),
     )
 
   if authorizedSigner.isSome and wg.auth.isSome:
     wg.auth.get().consumed.incl(authorizedSigner.get())
 
   info "RLN gifter registration succeeded",
-    leafIndex = regResult.leafIndex,
+    leafIndex = success.leafIndex,
     requestId = request.requestId
 
   return RlnGifterResponse(
     requestId: request.requestId,
-    statusCode: RlnGifterSuccess,
-    leafIndex: some(regResult.leafIndex),
-    configAccountId: some(regResult.configAccountId),
+    authSuccess: true,
+    success: some(success),
   )
 
 proc initProtocolHandler(wg: WakuRlnGifter) =
@@ -146,11 +163,7 @@ proc initProtocolHandler(wg: WakuRlnGifter) =
       rpc = await wg.handleRequest(conn.peerId, buffer)
     except CatchableError:
       error "rln-gifter handleRequest failed", error = getCurrentExceptionMsg()
-      rpc = RlnGifterResponse(
-        requestId: "N/A",
-        statusCode: RlnGifterInternalError,
-        statusDesc: some("internal error"),
-      )
+      rpc = failureResponse("N/A", true, "internal error")
 
     try:
       await conn.writeLp(rpc.encode().buffer)
