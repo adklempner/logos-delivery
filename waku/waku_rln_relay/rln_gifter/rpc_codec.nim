@@ -10,6 +10,8 @@ proc encode*(rpc: RlnGifterRequest): ProtoBuffer =
   pb.write3(1, rpc.requestId)
   pb.write3(2, rpc.idCommitment)
   pb.write3(3, rpc.rateLimit)
+  if rpc.authPayload.isSome:
+    pb.write3(4, rpc.authPayload.get())
   pb.finish3()
   return pb
 
@@ -32,6 +34,10 @@ proc decode*(T: type RlnGifterRequest, buffer: seq[byte]): ProtobufResult[T] =
     rpc.rateLimit = 100 # default
   else:
     rpc.rateLimit = rateLimit
+
+  var authPayload: seq[byte]
+  if ?pb.getField(4, authPayload):
+    rpc.authPayload = some(authPayload)
 
   return ok(rpc)
 

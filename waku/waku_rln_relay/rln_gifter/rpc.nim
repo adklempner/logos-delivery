@@ -7,6 +7,7 @@ type
     requestId*: string
     idCommitment*: string # hex-encoded 32-byte commitment
     rateLimit*: uint64
+    authPayload*: Option[seq[byte]] # opaque auth blob; format depends on the auth mechanism
 
   RlnGifterResponse* = object
     requestId*: string
@@ -18,6 +19,7 @@ type
 const
   RlnGifterSuccess* = RlnGifterStatusCode(200)
   RlnGifterBadRequest* = RlnGifterStatusCode(400)
+  RlnGifterUnauthorized* = RlnGifterStatusCode(401)
   RlnGifterRateLimited* = RlnGifterStatusCode(429)
   RlnGifterInternalError* = RlnGifterStatusCode(500)
   RlnGifterRegistrationFailed* = RlnGifterStatusCode(502)

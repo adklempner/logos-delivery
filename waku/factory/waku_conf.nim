@@ -55,6 +55,8 @@ type MixConf* = ref object
   gifterService*: bool
   gifterWalletAccount*: string
   gifterNode*: string
+  gifterAllowlist*: string
+  gifterAuthKey*: string
 
 type KademliaDiscoveryConf* = object
   bootstrapNodes*: seq[(PeerId, seq[MultiAddress])]

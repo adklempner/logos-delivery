@@ -1,5 +1,6 @@
 import
-  std/[options, sequtils, json, strutils],
+  std/[options, sequtils, json, strutils, sets],
+  eth/common/[addresses, keys],
   chronicles,
   chronos,
   libp2p/peerid,
@@ -246,8 +247,27 @@ proc setupProtocols(
               except CatchableError:
                 return err("failed to parse register_member result")
 
+          var auth = none(rln_gifter_protocol.EthAllowlistAuth)
+          if mixConf.gifterAllowlist.len > 0:
+            var addrs: HashSet[Address]
+            for piece in mixConf.gifterAllowlist.split(','):
+              let s = piece.strip()
+              if s.len == 0:
+                continue
+              let parsedAddr =
+                try:
+                  Address.fromHex(s)
+                except ValueError as e:
+                  return err("invalid gifter allowlist address '" & s & "': " & e.msg)
+              addrs.incl(parsedAddr)
+            if addrs.len > 0:
+              auth = some(rln_gifter_protocol.EthAllowlistAuth(
+                addresses: addrs, consumed: initHashSet[Address]()
+              ))
+              info "RLN gifter allowlist auth enabled", count = addrs.len
+
           let gifter = rln_gifter_protocol.WakuRlnGifter.new(
-            node.peerManager, node.rng, registerHandler
+            node.peerManager, node.rng, registerHandler, auth
           )
           node.switch.mount(gifter, protocolMatcher(WakuRlnGifterCodec))
           info "RLN gifter service mounted for mix"
@@ -608,10 +628,19 @@ proc startNode*(
         idCommitment = idCommitmentHex[0 .. 15] & "...",
         fromKeystore = lezGm.credentials.isSome
 
+      var authPayload = none(seq[byte])
+      if mixConf.gifterAuthKey.len > 0:
+        let seckey = PrivateKey.fromHex(mixConf.gifterAuthKey).valueOr:
+          return err("invalid mix-gifter-auth-key: " & $error)
+        let sig = seckey.sign(rln_gifter_protocol.eip191Message(idCommitmentHex))
+        authPayload = some(@(sig.toRaw()))
+        info "Signing gifter request with EIP-191 auth key",
+          signer = seckey.toPublicKey().to(Address).to0xHex()
+
       var regResult: tuple[leafIndex: uint64, configAccountId: string]
       try:
         let res = await gifterClient.requestMembership(
-          idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer
+          idCommitmentHex, uint64(lezGm.userMessageLimit), gifterPeer, authPayload
         )
         if res.isErr:
           return err("failed to register via gifter: " & res.error)

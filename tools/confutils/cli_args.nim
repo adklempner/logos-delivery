@@ -667,6 +667,20 @@ with the drawback of consuming some more bandwidth.""",
       name: "mix-gifter-node"
     .}: string
 
+    mixGifterAllowlist* {.
+      desc:
+        "Comma-separated 0x-prefixed Ethereum addresses allowed to redeem an RLN membership via the gifter (one-shot per address). Empty disables auth.",
+      defaultValue: "",
+      name: "mix-gifter-allowlist"
+    .}: string
+
+    mixGifterAuthKey* {.
+      desc:
+        "64-hex-char secp256k1 private key used to sign gifter-membership requests (EIP-191 over the idCommitment hex). Empty disables signing.",
+      defaultValue: "",
+      name: "mix-gifter-auth-key"
+    .}: string
+
     # Kademlia Discovery config
     enableKadDiscovery* {.
       desc:
@@ -1098,6 +1112,8 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.mixConf.withGifterService(n.mixGifterService)
   b.mixConf.withGifterWalletAccount(n.mixGifterWalletAccount)
   b.mixConf.withGifterNode(n.mixGifterNode)
+  b.mixConf.withGifterAllowlist(n.mixGifterAllowlist)
+  b.mixConf.withGifterAuthKey(n.mixGifterAuthKey)
   b.withMix(n.mix)
   if n.mixkey.isSome():
     b.mixConf.withMixKey(n.mixkey.get())

@@ -1,11 +1,12 @@
 {.push raises: [].}
 
 import
-  std/[options, json],
+  std/[options, json, sets],
   results,
   chronicles,
   chronos,
-  bearssl/rand
+  bearssl/rand,
+  eth/common/[addresses, keys]
 import
   ../../node/peer_manager/peer_manager,
   ../../waku_core,
@@ -22,10 +23,34 @@ type
     async, gcsafe
   .}
 
+  EthAllowlistAuth* = ref object
+    addresses*: HashSet[Address]
+    consumed*: HashSet[Address]
+
   WakuRlnGifter* = ref object of LPProtocol
     rng*: ref rand.HmacDrbgContext
     peerManager*: PeerManager
     registerHandler*: RegisterMemberHandler
+    auth*: Option[EthAllowlistAuth]
+
+proc eip191Message*(idCommitmentHex: string): seq[byte] =
+  let prefix = "\x19Ethereum Signed Message:\n" & $idCommitmentHex.len
+  result = newSeqOfCap[byte](prefix.len + idCommitmentHex.len)
+  for c in prefix:
+    result.add(byte(c))
+  for c in idCommitmentHex:
+    result.add(byte(c))
+
+proc verifyEip191*(
+    idCommitmentHex: string, sigBytes: openArray[byte]
+): Result[Address, string] =
+  if sigBytes.len != 65:
+    return err("signature must be 65 bytes, got " & $sigBytes.len)
+  let sig = Signature.fromRaw(sigBytes).valueOr:
+    return err("invalid signature encoding: " & $error)
+  let pub = sig.recover(eip191Message(idCommitmentHex)).valueOr:
+    return err("signature recovery failed: " & $error)
+  ok(pub.to(Address))
 
 proc handleRequest(
     wg: WakuRlnGifter, peerId: PeerId, buffer: seq[byte]
@@ -50,6 +75,36 @@ proc handleRequest(
       statusDesc: some("idCommitment must be 64 hex chars"),
     )
 
+  var authorizedSigner: Option[Address]
+  if wg.auth.isSome:
+    let auth = wg.auth.get()
+    let payloadOpt = request.authPayload
+    if payloadOpt.isNone:
+      return RlnGifterResponse(
+        requestId: request.requestId,
+        statusCode: RlnGifterUnauthorized,
+        statusDesc: some("missing auth payload"),
+      )
+    let signer = verifyEip191(request.idCommitment, payloadOpt.get()).valueOr:
+      return RlnGifterResponse(
+        requestId: request.requestId,
+        statusCode: RlnGifterUnauthorized,
+        statusDesc: some("signature verification failed: " & error),
+      )
+    if signer notin auth.addresses:
+      return RlnGifterResponse(
+        requestId: request.requestId,
+        statusCode: RlnGifterUnauthorized,
+        statusDesc: some("address not allowlisted: " & signer.to0xHex()),
+      )
+    if signer in auth.consumed:
+      return RlnGifterResponse(
+        requestId: request.requestId,
+        statusCode: RlnGifterUnauthorized,
+        statusDesc: some("address already used: " & signer.to0xHex()),
+      )
+    authorizedSigner = some(signer)
+
   let regResult = (await wg.registerHandler(request.idCommitment, request.rateLimit)).valueOr:
     error "RLN gifter registration failed", error = error
     return RlnGifterResponse(
@@ -57,6 +112,9 @@ proc handleRequest(
       statusCode: RlnGifterRegistrationFailed,
       statusDesc: some(error),
     )
+
+  if authorizedSigner.isSome and wg.auth.isSome:
+    wg.auth.get().consumed.incl(authorizedSigner.get())
 
   info "RLN gifter registration succeeded",
     leafIndex = regResult.leafIndex,
@@ -107,11 +165,13 @@ proc new*(
     peerManager: PeerManager,
     rng: ref rand.HmacDrbgContext,
     registerHandler: RegisterMemberHandler,
+    auth: Option[EthAllowlistAuth] = none(EthAllowlistAuth),
 ): T =
   let wg = WakuRlnGifter(
     rng: rng,
     peerManager: peerManager,
     registerHandler: registerHandler,
+    auth: auth,
   )
   wg.initProtocolHandler()
   return wg

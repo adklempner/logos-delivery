@@ -29,11 +29,13 @@ proc requestMembership*(
     idCommitment: string,
     rateLimit: uint64,
     peer: RemotePeerInfo,
+    authPayload: Option[seq[byte]] = none(seq[byte]),
 ): Future[RlnGifterResult] {.async.} =
   let request = RlnGifterRequest(
     requestId: generateRequestId(wc.rng),
     idCommitment: idCommitment,
     rateLimit: rateLimit,
+    authPayload: authPayload,
   )
 
   info "requesting RLN membership from gifter",
