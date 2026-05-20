@@ -1,4 +1,3 @@
-import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
 import
@@ -52,17 +51,18 @@ import
     waku_lightpush as lightpush_protocol,
     waku_enr,
     waku_peer_exchange,
-    rln,
+    waku_rln_relay,
+    common/option_shims,
     common/rate_limit/setting,
     common/callbacks,
     common/nimchronos,
     waku_mix,
     requests/node_requests,
     requests/health_requests,
-    api/events/health_events,
-    api/events/peer_events,
+    events/health_events,
+    events/message_events,
+    events/peer_events,
   ],
-  logos_delivery/api/events/kernel_events, # MessageSeenEvent
   logos_delivery/waku/discovery/waku_kademlia,
   logos_delivery/waku/net/[bound_ports, net_config],
   ./peer_manager,
@@ -110,7 +110,7 @@ type
     wakuStoreTransfer*: SyncTransfer
     wakuFilter*: waku_filter_v2.WakuFilter
     wakuFilterClient*: filter_client.WakuFilterClient
-    rln*: Rln
+    wakuRlnRelay*: WakuRLNRelay
     wakuLegacyLightPush*: WakuLegacyLightPush
     wakuLegacyLightpushClient*: WakuLegacyLightPushClient
     wakuLightPush*: WakuLightPush
@@ -121,7 +121,7 @@ type
     wakuAutoSharding*: Option[Sharding]
     enr*: enr.Record
     libp2pPing*: Ping
-    rng*: crypto.Rng
+    rng*: ref rand.HmacDrbgContext
     brokerCtx*: BrokerContext
     wakuRendezvous*: WakuRendezVous
     wakuRendezvousClient*: rendezvous_client.WakuRendezVousClient
@@ -134,9 +134,9 @@ type
       ## Kernel API Relay appHandlers (if any)
     subscriptionManager*: SubscriptionManager
     wakuMix*: WakuMix
+    kademliaDiscoveryLoop*: Future[void]
     wakuKademlia*: WakuKademlia
     ports*: BoundPorts
-    relayReconnectFut*: Future[void]
 
   SubscriptionManager* = ref object of RootObj
     node*: WakuNode
@@ -191,6 +191,18 @@ proc getShardsGetter(node: WakuNode, configuredShards: seq[uint16]): GetShards =
       return shards
     return configuredShards
 
+proc getRelayMixHandler*(node: WakuNode): Option[WakuRelayHandler] =
+  ## Returns a handler for mix spam protection coordination messages if mix is mounted
+  if node.wakuMix.isNil():
+    return none(WakuRelayHandler)
+
+  let handler: WakuRelayHandler = proc(
+      pubsubTopic: PubsubTopic, message: WakuMessage
+  ): Future[void] {.async, gcsafe.} =
+    await node.wakuMix.handleMessage(pubsubTopic, message)
+
+  return some(handler)
+
 proc getCapabilitiesGetter(node: WakuNode): GetCapabilities =
   return proc(): seq[Capabilities] {.closure, gcsafe, raises: [].} =
     if node.wakuRelay.isNil():
@@ -216,7 +228,7 @@ proc new*(
     peerManager: PeerManager,
     rateLimitSettings: ProtocolRateLimitSettings = DefaultProtocolRateLimit,
     # TODO: make this argument required after tests are updated
-    rng: crypto.Rng = crypto.newRng(),
+    rng: ref HmacDrbgContext = HmacDrbgContext.new(),
 ): T {.raises: [Defect, LPError, IOError, TLSStreamProtocolError].} =
   ## Creates a Waku Node instance.
 
@@ -314,6 +326,8 @@ proc mountMix*(
     clusterId: uint16,
     mixPrivKey: Curve25519Key,
     mixnodes: seq[MixNodePubInfo],
+    userMessageLimit: Option[int] = none(int),
+    disableSpamProtection: bool = false,
 ): Future[Result[void, string]] {.async.} =
   info "mounting mix protocol", nodeId = node.info #TODO log the config used
 
@@ -324,8 +338,29 @@ proc mountMix*(
     return err("Failed to convert multiaddress to string.")
   info "local addr", localaddr = localaddrStr
 
+  # Create callback to publish coordination messages via relay
+  let publishMessage: PublishMessage = proc(
+      message: WakuMessage
+  ): Future[Result[void, string]] {.async.} =
+    # Inline implementation of publish logic to avoid circular import
+    if node.wakuRelay.isNil():
+      return err("WakuRelay not mounted")
+
+    # Derive pubsub topic from content topic using auto sharding
+    let pubsubTopic =
+      if node.wakuAutoSharding.isNone():
+        return err("Auto sharding not configured")
+      else:
+        node.wakuAutoSharding.get().getShard(message.contentTopic).valueOr:
+          return err("Autosharding error: " & error)
+
+    # Publish via relay
+    discard await node.wakuRelay.publish(pubsubTopic, message)
+    return ok()
+
   node.wakuMix = WakuMix.new(
-    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes
+    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes, publishMessage,
+    userMessageLimit, disableSpamProtection,
   ).valueOr:
     error "Waku Mix protocol initialization failed", err = error
     return
@@ -335,32 +370,10 @@ proc mountMix*(
     node.switch.mount(node.wakuMix)
   catchRes.isOkOr:
     return err(error.msg)
-  return ok()
 
-proc mountKademlia*(
-    node: WakuNode, config: KademliaDiscoveryConf
-): Result[void, string] =
-  if not node.wakuKademlia.isNil():
-    return err("WakuKademlia already mounted, skipping")
-
-  let wk = WakuKademlia.new(
-    node.switch, node.peerManager, config.bootstrapNodes, config.servicesToAdvertise,
-    config.servicesToDiscover, config.randomLookupInterval,
-    config.serviceLookupInterval, node.rng, config.kadDhtConfig, config.discoConfig,
-    config.clientMode, config.xprPublishing,
-  ).valueOr:
-    return err("failed to create service discovery: " & error)
-
-  node.wakuKademlia = wk
-
-  let mountRes = catch:
-    node.switch.mount(wk.protocol)
-  mountRes.isOkOr:
-    return err("failed to mount service discovery: " & error.msg)
+  # Note: start() is called later in WakuNode.start(), not here during mount
 
   return ok()
-
-## Waku Sync
 
 proc mountStoreSync*(
     node: WakuNode,
@@ -621,14 +634,19 @@ proc start*(node: WakuNode) {.async.} =
   ## NOTE: This will dispatch gossipsub start to the WakuRelay.start method override
   await node.switch.start()
 
-  # Reconnect to known relay peers in the background; it waits a prune backoff
-  # and must not block startup.
-  node.relayReconnectFut = node.reconnectRelayPeers()
+  if not node.wakuMix.isNil():
+    await node.wakuMix.start()
+
+  # After switch.start, run custom Logos Delivery relay start logic
+  await node.reconnectRelayPeers()
+
+  # Kick off the DoS-protection registration broadcast now that peers are
+  # reconnected. Fire-and-forget: the proc returns immediately and an
+  # internal background task retries until the broadcast lands.
+  if not node.wakuMix.isNil():
+    node.wakuMix.registerDoSProtectionWithNetwork()
 
   node.started = true
-
-  if not node.wakuKademlia.isNil():
-    await node.wakuKademlia.start()
 
   if not node.wakuFilterClient.isNil():
     node.wakuFilterClient.registerPushHandler(
@@ -652,25 +670,18 @@ proc start*(node: WakuNode) {.async.} =
 proc stop*(node: WakuNode) {.async.} =
   ## By stopping the switch we are stopping all the underlying mounted protocols
 
-  # Cancel the background relay reconnection (may still be in its backoff wait).
-  if not node.relayReconnectFut.isNil():
-    await node.relayReconnectFut.cancelAndWait()
-
   await node.subscriptionManager.stop()
 
   node.stopProvidersAndListeners()
-
-  if not node.wakuKademlia.isNil():
-    await node.wakuKademlia.stop()
 
   ## NOTE: This will dispatch gossipsub stop to the WakuRelay.stop method override
   await node.switch.stop()
 
   node.peerManager.stop()
 
-  if not node.rln.isNil():
+  if not node.wakuRlnRelay.isNil():
     try:
-      await node.rln.stop() ## this can raise an exception
+      await node.wakuRlnRelay.stop() ## this can raise an exception
     except Exception:
       error "exception stopping the node", error = getCurrentExceptionMsg()
 
@@ -684,13 +695,16 @@ proc stop*(node: WakuNode) {.async.} =
       not node.wakuPeerExchangeClient.pxLoopHandle.isNil():
     await node.wakuPeerExchangeClient.pxLoopHandle.cancelAndWait()
 
+  if not node.wakuKademlia.isNil():
+    await node.wakuKademlia.stop()
+
   if not node.wakuRendezvousClient.isNil():
     await node.wakuRendezvousClient.stopWait()
 
   node.started = false
 
 proc isReady*(node: WakuNode): Future[bool] {.async: (raises: [Exception]).} =
-  if node.rln == nil:
+  if node.wakuRlnRelay == nil:
     return true
-  return await node.rln.isReady()
+  return await node.wakuRlnRelay.isReady()
   ## TODO: add other protocol `isReady` checks
