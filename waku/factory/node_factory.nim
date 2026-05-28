@@ -273,7 +273,13 @@ proc setupProtocols(
                     parsed["registered"].getBool() and
                     parsed.hasKey("leaf_index"):
                   return ok(parsed["leaf_index"].getInt().uint64)
-              except CatchableError:
+              except JsonParsingError as e:
+                warn "waitForChainCommit: bad JSON from is_member_registered",
+                  error = e.msg
+                continue
+              except JsonKindError as e:
+                warn "waitForChainCommit: unexpected JSON shape",
+                  error = e.msg
                 continue
             return err("confirmation timeout")
 
@@ -771,12 +777,19 @@ proc startNode*(
               let deadline = Moment.now() +
                 chronos.milliseconds(selfDeadlineMs)
               while Moment.now() < deadline:
-                await sleepAsync(chronos.milliseconds(selfPollMs))
+                try:
+                  await sleepAsync(chronos.milliseconds(selfPollMs))
+                except CancelledError:
+                  return
                 let qr =
                   try:
                     await gifter.statusHandler(
                       watcherConfigAccount, watcherIdc)
-                  except CatchableError:
+                  except CancelledError:
+                    return
+                  except CatchableError as e:
+                    debug "Gifter self-reg watcher: statusHandler raised",
+                      error = e.msg
                     continue
                 if qr.isErr: continue
                 let resp = qr.get()
