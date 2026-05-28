@@ -55,6 +55,7 @@ import
     waku_enr,
     waku_peer_exchange,
     waku_rln_relay,
+    waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
     common/rate_limit/setting,
     common/callbacks,
     common/nimchronos,
@@ -149,6 +150,9 @@ type
     legacyAppHandlers*: Table[PubsubTopic, WakuRelayHandler]
       ## Kernel API Relay appHandlers (if any)
     wakuMix*: WakuMix
+    wakuRlnGifter*: rln_gifter_protocol.WakuRlnGifter
+      ## Set when gifterService=true. Exposed so startNode can invoke its
+      ## registerHandler for the gifter's self-registration.
     edgeTopicsHealth*: Table[PubsubTopic, TopicHealth]
     edgeHealthEvent*: AsyncEvent
     edgeHealthLoop: Future[void]
@@ -195,6 +199,18 @@ proc getShardsGetter(node: WakuNode, configuredShards: seq[uint16]): GetShards =
       let shards = relayShards.get().shardIds
       return shards
     return configuredShards
+
+proc getRelayMixHandler*(node: WakuNode): Option[WakuRelayHandler] =
+  ## Returns a handler for mix spam protection coordination messages if mix is mounted
+  if node.wakuMix.isNil():
+    return none(WakuRelayHandler)
+
+  let handler: WakuRelayHandler = proc(
+      pubsubTopic: PubsubTopic, message: WakuMessage
+  ): Future[void] {.async, gcsafe.} =
+    await node.wakuMix.handleMessage(pubsubTopic, message)
+
+  return some(handler)
 
 proc getCapabilitiesGetter(node: WakuNode): GetCapabilities =
   return proc(): seq[Capabilities] {.closure, gcsafe, raises: [].} =
@@ -316,6 +332,8 @@ proc mountMix*(
     clusterId: uint16,
     mixPrivKey: Curve25519Key,
     mixnodes: seq[MixNodePubInfo],
+    userMessageLimit: Option[int] = none(int),
+    useOnchainLEZ: bool = false,
 ): Future[Result[void, string]] {.async.} =
   info "mounting mix protocol", nodeId = node.info #TODO log the config used
 
@@ -326,8 +344,29 @@ proc mountMix*(
     return err("Failed to convert multiaddress to string.")
   info "local addr", localaddr = localaddrStr
 
+  # Create callback to publish coordination messages via relay
+  let publishMessage: PublishMessage = proc(
+      message: WakuMessage
+  ): Future[Result[void, string]] {.async.} =
+    # Inline implementation of publish logic to avoid circular import
+    if node.wakuRelay.isNil():
+      return err("WakuRelay not mounted")
+
+    # Derive pubsub topic from content topic using auto sharding
+    let pubsubTopic =
+      if node.wakuAutoSharding.isNone():
+        return err("Auto sharding not configured")
+      else:
+        node.wakuAutoSharding.get().getShard(message.contentTopic).valueOr:
+          return err("Autosharding error: " & error)
+
+    # Publish via relay
+    discard await node.wakuRelay.publish(pubsubTopic, message)
+    return ok()
+
   node.wakuMix = WakuMix.new(
-    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes
+    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes, publishMessage,
+    userMessageLimit, useOnchainLEZ,
   ).valueOr:
     error "Waku Mix protocol initialization failed", err = error
     return
@@ -337,9 +376,10 @@ proc mountMix*(
     node.switch.mount(node.wakuMix)
   catchRes.isOkOr:
     return err(error.msg)
-  return ok()
 
-## Waku Sync
+  # Note: start() is called later in WakuNode.start(), not here during mount
+
+  return ok()
 
 proc mountStoreSync*(
     node: WakuNode,
@@ -537,6 +577,7 @@ proc loopEdgeHealth(node: WakuNode) {.async.} =
     except CancelledError:
       break
     except CatchableError as e:
+      # KEEP: async health loop must survive transient peer-manager errors.
       warn "Error in edge health check", error = e.msg
 
     # safety cooldown to protect from edge cases
@@ -634,7 +675,7 @@ proc start*(node: WakuNode) {.async.} =
     await node.startRelay()
 
   if not node.wakuMix.isNil():
-    node.wakuMix.start()
+    await node.wakuMix.start()
 
   if not node.wakuMetadata.isNil():
     node.wakuMetadata.start()
@@ -697,6 +738,7 @@ proc stop*(node: WakuNode) {.async.} =
     try:
       await node.wakuRlnRelay.stop() ## this can raise an exception
     except Exception:
+      # KEEP: shutdown path; continue tearing down other subsystems regardless.
       error "exception stopping the node", error = getCurrentExceptionMsg()
 
   if not node.wakuArchive.isNil():

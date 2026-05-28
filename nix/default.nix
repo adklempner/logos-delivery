@@ -10,6 +10,8 @@
   ],
   abidir ? null,
   zerokitRln,
+  zerokitMixRln ? null,
+  zerokitMixSrc ? null,
 }:
 
 assert pkgs.lib.assertMsg ((src.submodules or true) == true)
@@ -62,6 +64,8 @@ in stdenv.mkDerivation {
     "USE_SYSTEM_NIM=${if useSystemNim then "1" else "0"}"
     "LIBRLN_FILE=${zerokitRln}/lib/librln.${if abidir != null then "so" else "a"}"
     "POSTGRES=1"
+  ] ++ lib.optionals (zerokitMixRln != null) [
+    "MIX_LIBRLN_FILE=${zerokitMixRln}/lib/librln.a"
   ];
 
   configurePhase = ''
