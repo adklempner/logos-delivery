@@ -52,7 +52,17 @@ proc sendPushRequest(
   defer:
     await connection.closeWithEOF()
 
-  await connection.writeLP(req.encode().buffer)
+  try:
+    await connection.writeLP(req.encode().buffer)
+  except CancelledError as e:
+    raise e
+  except CatchableError as e:
+    error "Failed to write request to peer", error = e.msg
+    waku_lightpush_v3_errors.inc(labelValues = [dialFailure])
+    return lighpushErrorResult(
+      LightPushErrorCode.SERVICE_NOT_AVAILABLE,
+      "mix send failed: " & e.msg,
+    )
 
   var buffer: seq[byte]
   try:
