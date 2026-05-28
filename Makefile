@@ -179,10 +179,15 @@ deps: | nimble
 ##################
 ##     RLN      ##
 ##################
-.PHONY: librln
+.PHONY: librln mix-librln
 
 LIBRLN_BUILDDIR := $(CURDIR)/vendor/zerokit
 LIBRLN_VERSION := v2.0.2
+MIX_LIBRLN_VERSION ?= v2.0.0
+MIX_LIBRLN_REPO ?= https://github.com/vacp2p/zerokit.git
+MIX_LIBRLN_SRCDIR ?= $(CURDIR)/build/zerokit_$(MIX_LIBRLN_VERSION)
+MIX_LIBRLN_FILE ?= $(CURDIR)/build/librln_mix_$(MIX_LIBRLN_VERSION).a
+MIX_LIBRLN_NIM_PARAMS := --passL:$(MIX_LIBRLN_FILE) --passL:-lm
 
 ifeq ($(detected_OS),Windows)
 LIBRLN_FILE ?= rln.lib
@@ -195,12 +200,19 @@ $(LIBRLN_FILE):
 	echo -e $(BUILD_MSG) "$@" && \
 		bash scripts/build_rln.sh $(LIBRLN_BUILDDIR) $(LIBRLN_VERSION) $(LIBRLN_FILE)
 
+$(MIX_LIBRLN_FILE):
+	echo -e $(BUILD_MSG) "$@" && \
+		./scripts/build_rln_mix.sh $(MIX_LIBRLN_SRCDIR) $(MIX_LIBRLN_VERSION) $(MIX_LIBRLN_FILE) $(MIX_LIBRLN_REPO)
+
 librln: | $(LIBRLN_FILE)
 	$(eval NIM_PARAMS += --passL:$(LIBRLN_FILE) --passL:-lm)
+
+mix-librln: | $(MIX_LIBRLN_FILE)
 
 clean-librln:
 	cargo clean --manifest-path vendor/zerokit/rln/Cargo.toml
 	rm -f $(LIBRLN_FILE)
+	rm -f $(MIX_LIBRLN_FILE)
 
 clean: | clean-librln
 
@@ -224,10 +236,10 @@ testwaku: | build-deps build rln-deps librln
 
 # Windows: build with nim directly — `nimble <task>` re-clones git deps every
 # build and they intermittently hang on the MSYS2 runner. Flags mirror logos_delivery.nimble.
-wakunode2: | build-deps build deps librln
+wakunode2: | build-deps build deps librln mix-librln
 ifeq ($(detected_OS),Windows)
 	echo -e $(BUILD_MSG) "build/$@" && \
-		nim c --out:build/wakunode2 --mm:refc --cpu:amd64 $(NIM_PARAMS) -d:chronicles_log_level=TRACE apps/wakunode2/wakunode2.nim
+		nim c --out:build/wakunode2 --mm:refc --cpu:amd64 $(NIM_PARAMS) $(MIX_LIBRLN_NIM_PARAMS) -d:chronicles_log_level=TRACE apps/wakunode2/wakunode2.nim
 else
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(NIMBLE) wakunode2
@@ -249,7 +261,7 @@ chat2: | build-deps build deps librln
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(NIMBLE) chat2
 
-chat2mix: | build-deps build deps librln
+chat2mix: | build-deps build deps librln mix-librln
 	echo -e $(BUILD_MSG) "build/$@" && \
 		$(NIMBLE) chat2mix
 
@@ -445,7 +457,7 @@ else
 	$(NIMBLE) --verbose libwaku$(BUILD_COMMAND) logos_delivery.nimble
 endif
 
-liblogosdelivery: | build-deps librln
+liblogosdelivery: | build-deps librln mix-librln
 	$(NIMBLE) --verbose liblogosdelivery$(BUILD_COMMAND) logos_delivery.nimble
 
 logosdelivery_example: | build liblogosdelivery
