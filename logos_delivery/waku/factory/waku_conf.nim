@@ -51,6 +51,12 @@ type MixConf* = ref object
   mixKey*: Curve25519Key
   mixPubKey*: Curve25519Key
   mixnodes*: seq[MixNodePubInfo]
+  useOnchainLEZ*: bool
+  gifterService*: bool
+  gifterWalletAccount*: string
+  gifterNode*: string
+  gifterAllowlist*: string
+  gifterAuthKey*: string
 
 type KademliaDiscoveryConf* = object
   bootstrapNodes*: seq[(PeerId, seq[MultiAddress])]
