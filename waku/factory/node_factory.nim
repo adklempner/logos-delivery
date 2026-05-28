@@ -227,9 +227,7 @@ proc setupProtocols(
               return err("RLN config not set on gifter node")
             let holdingAccount =
               if walletAccount.len > 0: walletAccount else: configAccount
-            var idCommitmentHex = newStringOfCap(idc.len * 2)
-            for b in idc:
-              idCommitmentHex.add(toHex(int(b), 2))
+            let idCommitmentHex = mix_lez_client.bytesToHexUpper(idc)
             let params =
               "{\"configAccountId\":\"" & configAccount &
               "\",\"userHoldingAccountId\":\"" & holdingAccount &
@@ -259,9 +257,7 @@ proc setupProtocols(
             let (configAccount, _) = mix_lez_client.getRlnConfig()
             if configAccount.len == 0:
               return err("RLN config not set")
-            var idHex = newStringOfCap(idc.len * 2)
-            for b in idc:
-              idHex.add(toHex(int(b), 2))
+            let idHex = mix_lez_client.bytesToHexUpper(idc)
             let params =
               "{\"configAccountId\":\"" & configAccount &
               "\",\"idCommitment\":\"" & idHex & "\"}"
@@ -361,9 +357,7 @@ proc setupProtocols(
                 configAccountId: string, identityCommitment: seq[byte]
             ): Future[Result[rln_gifter_protocol.MembershipStatusResponse, string]]
                 {.async, gcsafe.} =
-              var idHex = newStringOfCap(identityCommitment.len * 2)
-              for b in identityCommitment:
-                idHex.add(toHex(int(b), 2))
+              let idHex = mix_lez_client.bytesToHexUpper(identityCommitment)
               let params =
                 "{\"configAccountId\":\"" & configAccountId &
                 "\",\"idCommitment\":\"" & idHex & "\"}"

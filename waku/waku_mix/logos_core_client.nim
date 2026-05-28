@@ -285,6 +285,14 @@ proc callRlnFetcherAsync*(methodName: string, params: string): Future[Result[str
       return err("RLN fetcher returned empty response")
     return ok(fetchRes.json)
 
+proc bytesToHexUpper*(bytes: openArray[byte]): string =
+  ## Uppercase hex without "0x" prefix. LEZ JSON RPC accepts both cases;
+  ## uppercase matches the existing register_member / is_member_registered
+  ## payload format.
+  result = newStringOfCap(bytes.len * 2)
+  for b in bytes:
+    result.add(toHex(int(b), 2))
+
 proc hexToBytes32(hex: string): Result[array[32, byte], string] =
   var h = hex
   if h.startsWith("0x") or h.startsWith("0X"):
