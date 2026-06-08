@@ -1,4 +1,3 @@
-import logos_delivery/waku/compat/option_valueor
 import
   std/[options, sequtils],
   chronicles,
@@ -9,8 +8,8 @@ import
   libp2p/nameresolving/dnsresolver,
   libp2p/crypto/crypto,
   libp2p/crypto/curve25519,
-  libp2p/extended_peer_record,
-  libp2p_mix/mix_protocol
+  libp2p/crypto/rng as libp2p_rng,
+  bearssl/rand
 
 import
   ./internal_config,
@@ -23,7 +22,7 @@ import
   ../net/net_config,
   ../waku_core,
   ../waku_core/codecs,
-  ../rln,
+  ../waku_rln_relay,
   ../discovery/waku_dnsdisc,
   ../waku_archive/retention_policy as policy,
   ../waku_archive/retention_policy/builder as policy_builder,
@@ -38,8 +37,7 @@ import
   ../node/peer_manager/peer_store/waku_peer_storage,
   ../node/peer_manager/peer_store/migrations as peer_store_sqlite_migrations,
   ../waku_lightpush_legacy/common,
-  ../common/rate_limit/setting,
-  ../api/events/discovery_events
+  ../common/rate_limit/setting
 
 ## Peer persistence
 
@@ -59,7 +57,7 @@ proc setupPeerStorage(): Result[Option[WakuPeerStorage], string] =
 proc initNode(
     conf: WakuConf,
     netConfig: NetConfig,
-    rng: crypto.Rng,
+    rng: ref HmacDrbgContext,
     record: enr.Record,
     peerStore: Option[WakuPeerStorage],
     relay: Relay,
@@ -170,29 +168,32 @@ proc setupProtocols(
     (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes)).isOkOr:
       return err("failed to mount waku mix protocol: " & $error)
 
-  # Setup service discovery
+  # Setup extended kademlia discovery
   if conf.kademliaDiscoveryConf.isSome():
-    var kadConf = conf.kademliaDiscoveryConf.get()
+    let mixPubKey =
+      if conf.mixConf.isSome():
+        some(conf.mixConf.get().mixPubKey)
+      else:
+        none(Curve25519Key)
 
-    if conf.mixConf.isSome():
-      let mixService =
-        ServiceInfo(id: MixProtocolID, data: @(conf.mixConf.get().mixPubKey))
-      kadConf.servicesToAdvertise.incl(mixService)
-      kadConf.servicesToDiscover.incl(mixService.id)
-
-    node.mountKademlia(kadConf).isOkOr:
-      return err("failed to setup service discovery: " & error)
-
-    # Register ServicePeersRequest provider
-    ServicePeersRequest.setProvider(
-      node.brokerCtx,
-      proc(serviceId: string): Future[Result[ServicePeersRequest, string]] {.async.} =
-        let peers = (await node.wakuKademlia.lookupServicePeers(serviceId)).valueOr:
-          return err("failed call to lookupServicePeers: " & error)
-        return ok(ServicePeersRequest(serviceId: serviceId, peers: peers)),
-    ).isOkOr:
-      error "Can't set provider for ServicePeersRequest", error = error
-      return err("Can't set provider for ServicePeersRequest: " & error)
+    node.wakuKademlia = WakuKademlia.new(
+      node.switch,
+      ExtendedServiceDiscoveryParams(
+        bootstrapNodes: conf.kademliaDiscoveryConf.get().bootstrapNodes,
+        mixPubKey: mixPubKey,
+        advertiseMix: conf.mixConf.isSome(),
+      ),
+      node.peerManager,
+      rng = libp2p_rng.newBearSslRng(node.rng),
+      getMixNodePoolSize = proc(): int {.gcsafe, raises: [].} =
+        if node.wakuMix.isNil():
+          0
+        else:
+          node.getMixNodePoolSize(),
+      isNodeStarted = proc(): bool {.gcsafe, raises: [].} =
+        node.started,
+    ).valueOr:
+      return err("failed to setup kademlia discovery: " & error)
 
   if conf.storeServiceConf.isSome():
     let storeServiceConf = conf.storeServiceConf.get()
@@ -337,7 +338,7 @@ proc setupProtocols(
     )
 
     try:
-      await node.setRlnValidator(rlnConf)
+      await node.mountRlnRelay(rlnConf)
     except CatchableError:
       return err("failed to mount waku RLN relay protocol: " & getCurrentExceptionMsg())
 
@@ -453,16 +454,21 @@ proc startNode*(
   if conf.relay:
     node.peerManager.start()
 
+  if not node.wakuKademlia.isNil():
+    let minMixPeers = if conf.mixConf.isSome(): 4 else: 0
+    (await node.wakuKademlia.start(minMixPeers = minMixPeers)).isOkOr:
+      return err("failed to start kademlia discovery: " & error)
+
   return ok()
 
 proc setupNode*(
-    wakuConf: WakuConf, rng: crypto.Rng = crypto.newRng(), relay: Relay
+    wakuConf: WakuConf, rng: ref HmacDrbgContext = HmacDrbgContext.new(), relay: Relay
 ): Future[Result[WakuNode, string]] {.async.} =
   let netConfig = (
     await networkConfiguration(
       wakuConf.clusterId, wakuConf.endpointConf, wakuConf.discv5Conf,
-      wakuConf.webSocketConf, wakuConf.quicConf, wakuConf.wakuFlags,
-      wakuConf.dnsAddrsNameServers, clientId,
+      wakuConf.webSocketConf, wakuConf.wakuFlags, wakuConf.dnsAddrsNameServers,
+      wakuConf.portsShift, clientId,
     )
   ).valueOr:
     error "failed to create internal config", error = error

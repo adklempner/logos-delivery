@@ -29,6 +29,7 @@ import
   ../../waku_lightpush/client as lightpush_client,
   ../../waku_lightpush as lightpush_protocol,
   ../peer_manager,
+  ../../common/option_shims,
   ../../common/rate_limit/setting,
   ../../rln
 

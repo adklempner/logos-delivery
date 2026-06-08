@@ -11,6 +11,7 @@ import
   presto/common
 
 import
+  logos_delivery/waku/common/option_shims,
   logos_delivery/waku/node/peer_manager,
   logos_delivery/waku/waku_lightpush/common,
   ../../../waku_node,

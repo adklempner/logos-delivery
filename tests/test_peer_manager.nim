@@ -1315,7 +1315,8 @@ procSuite "Peer Manager":
 
     # Create peer manager
     let pm = PeerManager.new(
-      switch = SwitchBuilder.new().withRng(rng()).withMplex().withNoise().build(),
+      switch =
+        SwitchBuilder.new().withRng(crypto.newRng()).withMplex().withNoise().build(),
       storage = nil,
     )
 

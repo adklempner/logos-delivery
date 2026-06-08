@@ -30,6 +30,7 @@ import
     waku_archive,
     waku_store_sync,
     rln,
+    waku_mix,
     node/waku_node,
     node/subscription_manager,
     node/peer_manager,
