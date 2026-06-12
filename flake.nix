@@ -97,6 +97,10 @@
             # fails even though libpq.dylib ships in the bundle. Disable
             # postgres so the dylib has no runtime libpq dependency.
             enablePostgres = false;
+            # Force chronicles log level so debug/info logs propagate to the
+            # runtime output. Default Nim chronicles level depends on Nimble
+            # task; this pins it explicitly while we instrument self-verify.
+            chroniclesLogLevel = "DEBUG";
           };
 
           wakucanary = pkgs.callPackage ./nix/default.nix {
