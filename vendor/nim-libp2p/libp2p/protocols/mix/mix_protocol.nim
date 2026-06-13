@@ -877,9 +877,9 @@ proc anonymizeLocalProtocolSend*(
   info "[INSTR] anonymizeLocalProtocolSend sphinx wrapped, about to sendPacket"
 
   # Send the wrapped message to the first mix node in the selected path
-  let result = await mixProto.sendPacket(nextHopPeerId, nextHopAddr, sphinxPacket, logConfig)
-  info "[INSTR] anonymizeLocalProtocolSend sendPacket returned", isOk = result.isOk
-  return result
+  let sendRes = await mixProto.sendPacket(nextHopPeerId, nextHopAddr, sphinxPacket, logConfig)
+  info "[INSTR] anonymizeLocalProtocolSend sendPacket returned", isOk = sendRes.isOk
+  return sendRes
 
 proc reply(
     mixProto: MixProtocol, surb: SURB, msg: seq[byte]
