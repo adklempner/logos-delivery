@@ -12,4 +12,4 @@
 	path = vendor/mix-rln-spam-protection-plugin
 	url = https://github.com/adklempner/mix-rln-spam-protection-plugin.git
 	ignore = untracked
-	branch = master
+	branch = diag/ffi-abi-fix
