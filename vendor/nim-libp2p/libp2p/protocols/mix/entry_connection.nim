@@ -125,16 +125,16 @@ proc new*(
   instance.mixDialer = proc(
       msg: seq[byte], codec: string, dest: MixDestination
   ): Future[void] {.async: (raises: [CancelledError, LPStreamError]).} =
-    stderr.writeLine("[INSTR2] mixDialer invoked msgLen=" & $msg.len & " codec=" & codec)
+    try: stderr.writeLine("[INSTR2] mixDialer invoked msgLen=" & $msg.len & " codec=" & codec); stderr.flushFile() except IOError: discard
     info "[INSTR] mixDialer invoked"
     let sendRes = await srcMix.anonymizeLocalProtocolSend(
       instance.incoming, msg, codec, dest, numSurbs
     )
     if sendRes.isErr:
-      stderr.writeLine("[INSTR2] mixDialer: anonymizeLocalProtocolSend ERR " & sendRes.error)
+      try: stderr.writeLine("[INSTR2] mixDialer: anonymizeLocalProtocolSend ERR " & sendRes.error); stderr.flushFile() except IOError: discard
       info "[INSTR] mixDialer: anonymizeLocalProtocolSend ERR"
       raise newException(LPStreamError, sendRes.error)
-    stderr.writeLine("[INSTR2] mixDialer: anonymizeLocalProtocolSend OK")
+    try: stderr.writeLine("[INSTR2] mixDialer: anonymizeLocalProtocolSend OK"); stderr.flushFile() except IOError: discard
     info "[INSTR] mixDialer: anonymizeLocalProtocolSend OK"
 
   instance

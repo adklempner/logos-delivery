@@ -734,7 +734,7 @@ proc anonymizeLocalProtocolSend*(
 
   mix_messages_recvd.inc(labelValues = ["Entry"])
 
-  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend ENTRY msgLen=" & $msg.len & " codec=" & codec)
+  try: stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend ENTRY msgLen=" & $msg.len & " codec=" & codec); stderr.flushFile() except IOError: discard
   info "[INSTR] anonymizeLocalProtocolSend ENTRY"
 
   var logConfig = SendPacketLogConfig(logType: Entry)
@@ -865,22 +865,22 @@ proc anonymizeLocalProtocolSend*(
     mix_messages_error.inc(labelValues = ["Entry", error[1]])
     return err(fmt"Error building message: {error[0]}")
 
-  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend path built hopCount=" & $hop.len)
+  try: stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend path built hopCount=" & $hop.len); stderr.flushFile() except IOError: discard
   info "[INSTR] anonymizeLocalProtocolSend path built"
 
   # Wrap in Sphinx packet
   let sphinxPacket = wrapInSphinxPacket(message, publicKeys, delay, hop, destHop).valueOr:
-    stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrap FAILED")
+    try: stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrap FAILED"); stderr.flushFile() except IOError: discard
     info "[INSTR] anonymizeLocalProtocolSend sphinx wrap FAILED"
     mix_messages_error.inc(labelValues = ["Entry", "NON_RECOVERABLE"])
     return err(fmt"Failed to wrap in sphinx packet: {error}")
 
-  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrapped about to sendPacket")
+  try: stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrapped about to sendPacket"); stderr.flushFile() except IOError: discard
   info "[INSTR] anonymizeLocalProtocolSend sphinx wrapped, about to sendPacket"
 
   # Send the wrapped message to the first mix node in the selected path
   let sendRes = await mixProto.sendPacket(nextHopPeerId, nextHopAddr, sphinxPacket, logConfig)
-  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sendPacket returned isOk=" & $sendRes.isOk)
+  try: stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sendPacket returned isOk=" & $sendRes.isOk); stderr.flushFile() except IOError: discard
   info "[INSTR] anonymizeLocalProtocolSend sendPacket returned"
   return sendRes
 
