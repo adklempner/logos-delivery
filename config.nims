@@ -8,6 +8,10 @@ else:
 # Add mix-rln-spam-protection-plugin to search path (all platforms)
 switch("path", "./vendor/mix-rln-spam-protection-plugin/src")
 
+# Use vendored nim-libp2p (with diag/mix-entry instrumentation) instead of the
+# nimble-installed one — both pinned to ff8d518, but vendor has extra commits.
+switch("path", "./vendor/nim-libp2p")
+
 if defined(windows):
   switch("passL", "rln.lib")
   switch("define", "postgres=false")
