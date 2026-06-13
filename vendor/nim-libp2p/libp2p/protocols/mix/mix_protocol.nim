@@ -734,8 +734,8 @@ proc anonymizeLocalProtocolSend*(
 
   mix_messages_recvd.inc(labelValues = ["Entry"])
 
-  info "[INSTR] anonymizeLocalProtocolSend ENTRY",
-    msgLen = msg.len, codec = codec, poolSize = mixProto.nodePool.len, destKind = $destination.kind
+  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend ENTRY msgLen=" & $msg.len & " codec=" & codec)
+  info "[INSTR] anonymizeLocalProtocolSend ENTRY"
 
   var logConfig = SendPacketLogConfig(logType: Entry)
   when defined(enable_mix_benchmarks):
@@ -865,20 +865,23 @@ proc anonymizeLocalProtocolSend*(
     mix_messages_error.inc(labelValues = ["Entry", error[1]])
     return err(fmt"Error building message: {error[0]}")
 
-  info "[INSTR] anonymizeLocalProtocolSend path built",
-    hopCount = hop.len, exitPeerId = exitPeerId, nextHopPeerId = nextHopPeerId, nextHopAddr = $nextHopAddr
+  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend path built hopCount=" & $hop.len)
+  info "[INSTR] anonymizeLocalProtocolSend path built"
 
   # Wrap in Sphinx packet
   let sphinxPacket = wrapInSphinxPacket(message, publicKeys, delay, hop, destHop).valueOr:
-    info "[INSTR] anonymizeLocalProtocolSend sphinx wrap FAILED", err = error
+    stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrap FAILED")
+    info "[INSTR] anonymizeLocalProtocolSend sphinx wrap FAILED"
     mix_messages_error.inc(labelValues = ["Entry", "NON_RECOVERABLE"])
     return err(fmt"Failed to wrap in sphinx packet: {error}")
 
+  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sphinx wrapped about to sendPacket")
   info "[INSTR] anonymizeLocalProtocolSend sphinx wrapped, about to sendPacket"
 
   # Send the wrapped message to the first mix node in the selected path
   let sendRes = await mixProto.sendPacket(nextHopPeerId, nextHopAddr, sphinxPacket, logConfig)
-  info "[INSTR] anonymizeLocalProtocolSend sendPacket returned", isOk = sendRes.isOk
+  stderr.writeLine("[INSTR2] anonymizeLocalProtocolSend sendPacket returned isOk=" & $sendRes.isOk)
+  info "[INSTR] anonymizeLocalProtocolSend sendPacket returned"
   return sendRes
 
 proc reply(
