@@ -17,6 +17,12 @@ type MixConfBuilder* = object
   mixNodes: seq[MixNodePubInfo]
   userMessageLimit: Option[int]
   disableSpamProtection: bool
+  useOnchainLEZ: bool
+  gifterService: bool
+  gifterWalletAccount: string
+  gifterNode: string
+  gifterAllowlist: string
+  gifterAuthKey: string
 
 proc init*(T: type MixConfBuilder): MixConfBuilder =
   MixConfBuilder()
@@ -36,6 +42,24 @@ proc withUserMessageLimit*(b: var MixConfBuilder, limit: int) =
 proc withDisableSpamProtection*(b: var MixConfBuilder, disable: bool) =
   b.disableSpamProtection = disable
 
+proc withUseOnchainLEZ*(b: var MixConfBuilder, use: bool) =
+  b.useOnchainLEZ = use
+
+proc withGifterService*(b: var MixConfBuilder, enabled: bool) =
+  b.gifterService = enabled
+
+proc withGifterWalletAccount*(b: var MixConfBuilder, account: string) =
+  b.gifterWalletAccount = account
+
+proc withGifterNode*(b: var MixConfBuilder, node: string) =
+  b.gifterNode = node
+
+proc withGifterAllowlist*(b: var MixConfBuilder, allowlist: string) =
+  b.gifterAllowlist = allowlist
+
+proc withGifterAuthKey*(b: var MixConfBuilder, authKey: string) =
+  b.gifterAuthKey = authKey
+
 proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
   if not b.enabled.get(DefaultMixEnabled):
     return ok(none[MixConf]())
@@ -51,6 +75,12 @@ proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
             mixNodes: b.mixNodes,
             userMessageLimit: b.userMessageLimit,
             disableSpamProtection: b.disableSpamProtection,
+            useOnchainLEZ: b.useOnchainLEZ,
+            gifterService: b.gifterService,
+            gifterWalletAccount: b.gifterWalletAccount,
+            gifterNode: b.gifterNode,
+            gifterAllowlist: b.gifterAllowlist,
+            gifterAuthKey: b.gifterAuthKey,
           )
         )
       )
@@ -65,6 +95,12 @@ proc build*(b: MixConfBuilder): Result[Option[MixConf], string] =
             mixNodes: b.mixNodes,
             userMessageLimit: b.userMessageLimit,
             disableSpamProtection: b.disableSpamProtection,
+            useOnchainLEZ: b.useOnchainLEZ,
+            gifterService: b.gifterService,
+            gifterWalletAccount: b.gifterWalletAccount,
+            gifterNode: b.gifterNode,
+            gifterAllowlist: b.gifterAllowlist,
+            gifterAuthKey: b.gifterAuthKey,
           )
         )
       )

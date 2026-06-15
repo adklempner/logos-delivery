@@ -37,20 +37,13 @@ import ./envvar as confEnvvarDefs, ./envvar_net as confEnvvarNet
 
 export
   confTomlDefs, confTomlNet, confEnvvarDefs, confEnvvarNet, ProtectedShard,
-  DefaultMaxWakuMessageSizeStr, DefaultAgentString
+  DefaultMaxWakuMessageSizeStr
 
 logScope:
   topics = "waku cli args"
 
 # Git version in git describe format (defined at compile time)
 const git_version* {.strdefine.} = "n/a"
-
-# CLI defaults that differ from confbuilder defaults
-const
-  DefaultCLIRelay* = true
-  DefaultCLIPeerExchange* = true
-  DefaultCLIRendezvous* = true
-  DefaultCLINat* = "any"
 
 type ConfResult*[T] = Result[T, string]
 
@@ -124,23 +117,20 @@ type WakuNodeConf* = object
     name: "rln-relay-eth-private-key"
   .}: string
 
-  # Option-typed; desc states the default since the CLI can't auto-show it for none().
+  # TODO: Remove "Default is" when it's already visible on the CLI
   rlnRelayUserMessageLimit* {.
     desc:
-      "Set a user message limit for the rln membership registration. Must be a positive integer. Default is " &
-      $DefaultRlnRelayUserMessageLimit & ".",
-    defaultValue: none(uint64),
+      "Set a user message limit for the rln membership registration. Must be a positive integer. Default is 1.",
+    defaultValue: 1,
     name: "rln-relay-user-message-limit"
-  .}: Option[uint64]
+  .}: uint64
 
-  # Option-typed; desc states the default since the CLI can't auto-show it for none().
   rlnEpochSizeSec* {.
     desc:
-      "Epoch size in seconds used to rate limit RLN memberships. Default is " &
-      $DefaultRlnRelayEpochSizeSec & " second.",
-    defaultValue: none(uint64),
+      "Epoch size in seconds used to rate limit RLN memberships. Default is 1 second.",
+    defaultValue: 1,
     name: "rln-relay-epoch-sec"
-  .}: Option[uint64]
+  .}: uint64
 
   maxMessageSize* {.
     desc:
@@ -175,23 +165,20 @@ type WakuNodeConf* = object
 
     preset* {.
       desc:
-        "Network preset to use. 'twn' is The RLN-protected Waku Network (cluster 1). 'logos.dev' is the Logos Dev Network (cluster 2). 'logos.test' is the Logos Test Network (cluster 2). 'status.prod' is the Status Production Network (cluster 16, RLN off, auto-sharding with 1 shard). Overrides other values.",
+        "Network preset to use. 'twn' is The RLN-protected Waku Network (cluster 1). 'logos.dev' is the Logos Dev Network (cluster 2). 'logos.test' is the Logos Test Network (cluster 2). Overrides other values.",
       defaultValue: "",
       name: "preset"
     .}: string
 
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
     clusterId* {.
-      desc: static(
-        "Cluster id that the node is running in. Node in a different cluster id is disconnected. Default is " &
-          $DefaultClusterId & "."
-      ),
-      defaultValue: none(uint16),
+      desc:
+        "Cluster id that the node is running in. Node in a different cluster id is disconnected.",
+      defaultValue: 0,
       name: "cluster-id"
-    .}: Option[uint16]
+    .}: uint16
 
     agentString* {.
-      defaultValue: DefaultAgentString,
+      defaultValue: "logos-delivery-" & cli_args.git_version,
       desc: "Node agent string which is used as identifier in network",
       name: "agent-string"
     .}: string
@@ -216,8 +203,7 @@ type WakuNodeConf* = object
       desc:
         "Specify method to use for determining public address. " &
         "Must be one of: any, none, upnp, pmp, extip:<IP>.",
-      defaultValue: DefaultCLINat,
-      name: "nat"
+      defaultValue: "any"
     .}: string
 
     extMultiAddrs* {.
@@ -289,9 +275,7 @@ hence would have reachability issues.""",
 
     ## Relay config
     relay* {.
-      desc: "Enable relay protocol: true|false",
-      defaultValue: DefaultCLIRelay,
-      name: "relay"
+      desc: "Enable relay protocol: true|false", defaultValue: true, name: "relay"
     .}: bool
 
     relayPeerExchange* {.
@@ -307,14 +291,11 @@ hence would have reachability issues.""",
       name: "relay-shard-manager"
     .}: bool
 
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
     rlnRelay* {.
-      desc:
-        "Enable spam protection through rln-relay: true|false. Default is " &
-        $DefaultRlnRelayEnabled & ".",
-      defaultValue: none(bool),
+      desc: "Enable spam protection through rln-relay: true|false.",
+      defaultValue: false,
       name: "rln-relay"
-    .}: Option[bool]
+    .}: bool
 
     rlnRelayCredIndex* {.
       desc: "the index of the onchain commitment to use",
@@ -323,9 +304,9 @@ hence would have reachability issues.""",
 
     rlnRelayDynamic* {.
       desc: "Enable  waku-rln-relay with on-chain dynamic group management: true|false.",
-      defaultValue: none(bool),
+      defaultValue: false,
       name: "rln-relay-dynamic"
-    .}: Option[bool]
+    .}: bool
 
     entryNodes* {.
       desc:
@@ -485,14 +466,13 @@ hence would have reachability issues.""",
     .}: string
 
     ## Reliability config
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
     reliabilityEnabled* {.
       desc:
-        """Adds an extra effort in the delivery/reception of messages by leveraging store-v3 requests, with the drawback of consuming some more bandwidth. Default is """ &
-        $DefaultP2pReliability & ".",
-      defaultValue: none(bool),
+        """Adds an extra effort in the delivery/reception of messages by leveraging store-v3 requests.
+with the drawback of consuming some more bandwidth.""",
+      defaultValue: true,
       name: "reliability"
-    .}: Option[bool]
+    .}: bool
 
     ## REST HTTP config
     rest* {.
@@ -577,11 +557,8 @@ hence would have reachability issues.""",
     .}: string
 
     ## Discovery v5 config
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
     discv5Discovery* {.
-      desc:
-        "Enable discovering nodes via Node Discovery v5. Default is " &
-        $DefaultDiscv5Enabled & ".",
+      desc: "Enable discovering nodes via Node Discovery v5.",
       defaultValue: none(bool),
       name: "discv5-discovery"
     .}: Option[bool]
@@ -631,7 +608,7 @@ hence would have reachability issues.""",
     ## waku peer exchange config
     peerExchange* {.
       desc: "Enable waku peer exchange protocol (responder side): true|false",
-      defaultValue: DefaultCLIPeerExchange,
+      defaultValue: true,
       name: "peer-exchange"
     .}: bool
 
@@ -645,17 +622,13 @@ hence would have reachability issues.""",
     ## Rendez vous
     rendezvous* {.
       desc: "Enable waku rendezvous discovery server",
-      defaultValue: DefaultCLIRendezvous,
+      defaultValue: true,
       name: "rendezvous"
     .}: bool
 
     #Mix config
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
-    mix* {.
-      desc: "Enable mix protocol: true|false. Default is " & $DefaultMix & ".",
-      defaultValue: none(bool),
-      name: "mix"
-    .}: Option[bool]
+    mix* {.desc: "Enable mix protocol: true|false", defaultValue: false, name: "mix".}:
+      bool
 
     mixkey* {.
       desc:
@@ -681,33 +654,58 @@ hence would have reachability issues.""",
       name: "mix-disable-spam-protection"
     .}: bool
 
+    mixOnchainLEZ* {.
+      desc: "Use on-chain LEZ (LSSA sequencer) for mix RLN spam protection instead of off-chain keystores.",
+      defaultValue: false,
+      name: "mix-onchain-lez"
+    .}: bool
+
+    mixGifterService* {.
+      desc: "Run as RLN gifter service for mix nodes.",
+      defaultValue: false,
+      name: "mix-gifter-service"
+    .}: bool
+
+    mixGifterWalletAccount* {.
+      desc: "Wallet account ID for RLN gifter registration payments.",
+      defaultValue: "",
+      name: "mix-gifter-wallet-account"
+    .}: string
+
+    mixGifterNode* {.
+      desc: "Multiaddress of the RLN gifter node (for client auto-registration).",
+      defaultValue: "",
+      name: "mix-gifter-node"
+    .}: string
+
+    mixGifterAllowlist* {.
+      desc:
+        "Comma-separated 0x-prefixed Ethereum addresses allowed to redeem an RLN membership via the gifter (one-shot per address). Empty disables auth.",
+      defaultValue: "",
+      name: "mix-gifter-allowlist"
+    .}: string
+
+    mixGifterAuthKey* {.
+      desc:
+        "64-hex-char secp256k1 private key used to sign gifter-membership requests (EIP-191 over the idCommitment hex). Empty disables signing.",
+      defaultValue: "",
+      name: "mix-gifter-auth-key"
+    .}: string
+
+
     # Kademlia Discovery config
-    # Option-typed; desc states the default since the CLI can't auto-show it for none().
     enableKadDiscovery* {.
       desc:
-        "Enable extended kademlia discovery. Can be enabled without bootstrap nodes for the first node in the network. Default is " &
-        $DefaultKadEnabled & ".",
-      defaultValue: none(bool),
+        "Enable extended kademlia discovery. Can be enabled without bootstrap nodes for the first node in the network.",
+      defaultValue: false,
       name: "enable-kad-discovery"
-    .}: Option[bool]
+    .}: bool
 
     kadBootstrapNodes* {.
       desc:
         "Peer multiaddr for kademlia discovery bootstrap node (must include /p2p/<peerID>). Argument may be repeated.",
       name: "kad-bootstrap-node"
     .}: seq[string]
-
-    kadRandomLookupIntervalSec* {.
-      desc: "Interval seconds between random kademlia lookups.",
-      defaultValue: 60,
-      name: "kad-random-lookup-interval"
-    .}: uint32
-
-    kadServiceLookupIntervalSec* {.
-      desc: "Interval seconds between service-specific kademlia lookups.",
-      defaultValue: 60,
-      name: "kad-service-lookup-interval"
-    .}: uint32
 
     ## websocket config
     websocketSupport* {.
@@ -737,17 +735,6 @@ hence would have reachability issues.""",
       defaultValue: "",
       name: "websocket-secure-cert-path"
     .}: string
-
-    ## quic config
-    quicSupport* {.
-      desc: "Enable QUIC transport:  true|false",
-      defaultValue: false,
-      name: "quic-support"
-    .}: bool
-
-    quicPort* {.
-      desc: "QUIC (UDP) listening port.", defaultValue: 60000, name: "quic-port"
-    .}: Port
 
     ## Rate limitation config, if not set, rate limit checks will not be performed
     rateLimits* {.
@@ -983,15 +970,15 @@ proc toKeystoreGeneratorConf*(n: WakuNodeConf): RlnKeystoreGeneratorConf =
     chainId: UInt256.fromBytesBE(n.rlnRelayChainId.toBytesBE()),
     ethClientUrls: n.ethClientUrls.mapIt(string(it)),
     ethContractAddress: n.rlnRelayEthContractAddress,
-    userMessageLimit: n.rlnRelayUserMessageLimit.get(DefaultRlnRelayUserMessageLimit),
+    userMessageLimit: n.rlnRelayUserMessageLimit,
     ethPrivateKey: n.rlnRelayEthPrivateKey,
     credPath: n.rlnRelayCredPath,
     credPassword: n.rlnRelayCredPassword,
   )
 
-proc toNetworkPresetConf(
+proc toNetworkConf(
     preset: string, clusterId: Option[uint16]
-): ConfResult[Option[NetworkPresetConf]] =
+): ConfResult[Option[NetworkConf]] =
   var lcPreset = toLowerAscii(preset)
   if clusterId.isSome() and clusterId.get() == 1:
     warn(
@@ -1006,32 +993,29 @@ proc toNetworkPresetConf(
 
   case lcPreset
   of "":
-    ok(none(NetworkPresetConf))
+    ok(none(NetworkConf))
   of "twn":
-    ok(some(NetworkPresetConf.TheWakuNetworkConf()))
+    ok(some(NetworkConf.TheWakuNetworkConf()))
   of "logos.dev", "logosdev":
-    ok(some(NetworkPresetConf.LogosDevConf()))
+    ok(some(NetworkConf.LogosDevConf()))
   of "logos.test", "logostest":
-    ok(some(NetworkPresetConf.LogosTestConf()))
-  of "status.prod", "statusprod":
-    ok(some(NetworkPresetConf.StatusProdConf()))
+    ok(some(NetworkConf.LogosTestConf()))
   else:
     err("Invalid --preset value passed: " & lcPreset)
 
 proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   var b = WakuConfBuilder.init()
 
-  let networkPresetConf = toNetworkPresetConf(n.preset, n.clusterId).valueOr:
+  let networkConf = toNetworkConf(n.preset, some(n.clusterId)).valueOr:
     return err("Error determining cluster from preset: " & $error)
 
-  if networkPresetConf.isSome():
-    b.withNetworkPresetConf(networkPresetConf.get())
+  if networkConf.isSome():
+    b.withNetworkConf(networkConf.get())
 
   b.withLogLevel(n.logLevel)
   b.withLogFormat(n.logFormat)
 
-  if n.rlnRelay.isSome():
-    b.rlnRelayConf.withEnabled(n.rlnRelay.get())
+  b.rlnRelayConf.withEnabled(n.rlnRelay)
   if n.rlnRelayCredPath != "":
     b.rlnRelayConf.withCredPath(n.rlnRelayCredPath)
   if n.rlnRelayCredPassword != "":
@@ -1043,22 +1027,18 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
 
   if n.rlnRelayChainId != 0:
     b.rlnRelayConf.withChainId(n.rlnRelayChainId)
-  if n.rlnRelayUserMessageLimit.isSome():
-    b.rlnRelayConf.withUserMessageLimit(n.rlnRelayUserMessageLimit.get())
-  if n.rlnEpochSizeSec.isSome():
-    b.rlnRelayConf.withEpochSizeSec(n.rlnEpochSizeSec.get())
+  b.rlnRelayConf.withUserMessageLimit(n.rlnRelayUserMessageLimit)
+  b.rlnRelayConf.withEpochSizeSec(n.rlnEpochSizeSec)
 
   if n.rlnRelayCredIndex.isSome():
     b.rlnRelayConf.withCredIndex(n.rlnRelayCredIndex.get())
-  if n.rlnRelayDynamic.isSome():
-    b.rlnRelayConf.withDynamic(n.rlnRelayDynamic.get())
+  b.rlnRelayConf.withDynamic(n.rlnRelayDynamic)
 
   if n.maxMessageSize != "":
     b.withMaxMessageSize(n.maxMessageSize)
 
   b.withProtectedShards(n.protectedShards)
-  if n.clusterId.isSome():
-    b.withClusterId(n.clusterId.get())
+  b.withClusterId(n.clusterId)
 
   b.withAgentString(n.agentString)
 
@@ -1112,7 +1092,7 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   if n.numShardsInNetwork != 0:
     b.withNumShardsInCluster(n.numShardsInNetwork)
     b.withShardingConf(AutoSharding)
-  elif networkPresetConf.isNone():
+  else:
     b.withShardingConf(StaticSharding)
 
   # It is not possible to pass an empty sequence on the CLI
@@ -1145,10 +1125,15 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.storeServiceConf.storeSyncConf.withRangeSec(n.storeSyncRange)
   b.storeServiceConf.storeSyncConf.withRelayJitterSec(n.storeSyncRelayJitter)
 
-  if n.mix.isSome():
-    b.mixConf.withEnabled(n.mix.get())
-    b.withMix(n.mix.get())
+  b.mixConf.withEnabled(n.mix)
   b.mixConf.withMixNodes(n.mixnodes)
+  b.withMix(n.mix)
+  b.mixConf.withUseOnchainLEZ(n.mixOnchainLEZ)
+  b.mixConf.withGifterService(n.mixGifterService)
+  b.mixConf.withGifterWalletAccount(n.mixGifterWalletAccount)
+  b.mixConf.withGifterNode(n.mixGifterNode)
+  b.mixConf.withGifterAllowlist(n.mixGifterAllowlist)
+  b.mixConf.withGifterAuthKey(n.mixGifterAuthKey)
   if n.mixkey.isSome():
     b.mixConf.withMixKey(n.mixkey.get())
   if n.mixUserMessageLimit.isSome():
@@ -1161,8 +1146,7 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.filterServiceConf.withMaxCriteria(n.filterMaxCriteria)
 
   b.withLightPush(n.lightpush)
-  if n.reliabilityEnabled.isSome():
-    b.withP2pReliability(n.reliabilityEnabled.get())
+  b.withP2pReliability(n.reliabilityEnabled)
 
   b.restServerConf.withEnabled(n.rest)
   b.restServerConf.withListenAddress(n.restAddress)
@@ -1200,26 +1184,13 @@ proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   b.webSocketConf.withKeyPath(n.websocketSecureKeyPath)
   b.webSocketConf.withCertPath(n.websocketSecureCertPath)
 
-  b.quicConf.withEnabled(n.quicSupport)
-  b.quicConf.withQuicPort(n.quicPort)
-
   if n.rateLimits.len > 0:
     b.rateLimitConf.withRateLimits(n.rateLimits)
 
   b.withLocalStoragePath(n.localStoragePath)
 
-  if n.enableKadDiscovery.isSome():
-    b.kademliaDiscoveryConf.withEnabled(n.enableKadDiscovery.get())
+  b.kademliaDiscoveryConf.withEnabled(n.enableKadDiscovery)
   b.kademliaDiscoveryConf.withBootstrapNodes(n.kadBootstrapNodes)
-
-  if n.kadRandomLookupIntervalSec > 0:
-    b.kademliaDiscoveryConf.withRandomLookupInterval(
-      chronos.seconds(n.kadRandomLookupIntervalSec.int64)
-    )
-  if n.kadServiceLookupIntervalSec > 0:
-    b.kademliaDiscoveryConf.withServiceLookupInterval(
-      chronos.seconds(n.kadServiceLookupIntervalSec.int64)
-    )
 
   # Mode-driven configuration overrides
   case n.mode
