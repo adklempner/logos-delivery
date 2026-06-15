@@ -1,6 +1,8 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/common/option_shims
+
 import std/options, results, stew/sorted_set, chronicles, chronos
 import ../../../waku_core, ../../common, ../../driver, ./index
 

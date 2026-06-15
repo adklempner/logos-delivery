@@ -14,6 +14,7 @@ import
 
 import
   ../common/databases/db_sqlite,
+  ../common/option_shims,
   ../waku_core,
   ../waku_archive,
   ../common/nimchronos,

@@ -1,6 +1,8 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/common/option_shims
+
 import std/options, results, eth/keys as eth_keys, libp2p/crypto/crypto as libp2p_crypto
 
 import eth/p2p/discoveryv5/enr except TypedRecord, toTypedRecord
