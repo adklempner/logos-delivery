@@ -8,7 +8,7 @@
       "downloadMethod": "git",
       "dependencies": [],
       "checksums": {
-        "sha1": "68bb85cbfb1832ce4db43943911b046c3af3caab"
+        "sha1": "a092a045d3a427d127a5334a6e59c76faff54686"
       }
     },
     "unittest2": {

@@ -61,10 +61,10 @@ import
     waku_mix,
     requests/node_requests,
     requests/health_requests,
-    events/health_events,
-    events/message_events,
-    events/peer_events,
+    api/events/health_events,
+    api/events/peer_events,
   ],
+  logos_delivery/api/events/kernel_events,
   logos_delivery/waku/discovery/waku_kademlia,
   logos_delivery/waku/net/[bound_ports, net_config],
   ./peer_manager,
@@ -112,7 +112,7 @@ type
     wakuStoreTransfer*: SyncTransfer
     wakuFilter*: waku_filter_v2.WakuFilter
     wakuFilterClient*: filter_client.WakuFilterClient
-    wakuRlnRelay*: WakuRLNRelay
+    rln*: Rln
     wakuLegacyLightPush*: WakuLegacyLightPush
     wakuLegacyLightpushClient*: WakuLegacyLightPushClient
     wakuLightPush*: WakuLightPush
@@ -735,9 +735,9 @@ proc stop*(node: WakuNode) {.async.} =
 
   node.peerManager.stop()
 
-  if not node.wakuRlnRelay.isNil():
+  if not node.rln.isNil():
     try:
-      await node.wakuRlnRelay.stop() ## this can raise an exception
+      await node.rln.stop() ## this can raise an exception
     except Exception:
       # KEEP: shutdown path; continue tearing down other subsystems regardless.
       error "exception stopping the node", error = getCurrentExceptionMsg()
@@ -761,7 +761,7 @@ proc stop*(node: WakuNode) {.async.} =
   node.started = false
 
 proc isReady*(node: WakuNode): Future[bool] {.async: (raises: [Exception]).} =
-  if node.wakuRlnRelay == nil:
+  if node.rln == nil:
     return true
-  return await node.wakuRlnRelay.isReady()
+  return await node.rln.isReady()
   ## TODO: add other protocol `isReady` checks
