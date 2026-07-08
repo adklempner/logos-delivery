@@ -2,7 +2,8 @@
 
 import logos_delivery/waku/compat/option_valueor
 
-import std/options, results, chronicles, chronos, bearssl/rand
+import std/options, results, chronicles, chronos
+import libp2p/crypto/crypto
 import libp2p/stream/connection
 import
   ../../node/peer_manager,
@@ -18,11 +19,11 @@ type
   RlnGifterResult* = Result[MembershipAllocationSuccess, string]
 
   WakuRlnGifterClient* = ref object
-    rng*: ref rand.HmacDrbgContext
+    rng*: crypto.Rng
     peerManager*: PeerManager
 
 proc new*(
-    T: type WakuRlnGifterClient, peerManager: PeerManager, rng: ref rand.HmacDrbgContext
+    T: type WakuRlnGifterClient, peerManager: PeerManager, rng: crypto.Rng
 ): T =
   WakuRlnGifterClient(peerManager: peerManager, rng: rng)
 

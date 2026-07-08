@@ -3,7 +3,6 @@ import
   chronos,
   chronicles,
   bearssl/rand,
-  libp2p/crypto/rng as libp2p_rng,
   libp2p/protocols/connectivity/autonat/client,
   libp2p/protocols/connectivity/autonat/service
 
@@ -17,8 +16,7 @@ proc getAutonatService*(rng: crypto.Rng): AutonatService =
   ## in the calculation.
   let autonatService = AutonatService.new(
     autonatClient = AutonatClient.new(),
-    # libp2p 1.15.3: AutonatService.new now takes libp2p `Rng`.
-    rng = libp2p_rng.newBearSslRng(rng),
+    rng = rng,
     scheduleInterval = AutonatCheckInterval,
     askNewConnectedPeers = false,
     numPeersToAsk = 3,

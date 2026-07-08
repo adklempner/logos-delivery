@@ -7,7 +7,7 @@ import
   results,
   chronicles,
   chronos,
-  bearssl/rand,
+  libp2p/crypto/crypto,
   eth/common/[addresses, keys]
 import
   ../../node/peer_manager/peer_manager,
@@ -33,7 +33,7 @@ type
     consumed*: HashSet[Address]
 
   WakuRlnGifter* = ref object of LPProtocol
-    rng*: ref rand.HmacDrbgContext
+    rng*: crypto.Rng
     peerManager*: PeerManager
     registerHandler*: RegisterMemberHandler
     statusHandler*: MembershipStatusHandler
@@ -186,7 +186,7 @@ proc initProtocolHandler(wg: WakuRlnGifter) =
 proc new*(
     T: type WakuRlnGifter,
     peerManager: PeerManager,
-    rng: ref rand.HmacDrbgContext,
+    rng: crypto.Rng,
     registerHandler: RegisterMemberHandler,
     auth: Option[EthAllowlistAuth] = none(EthAllowlistAuth),
     statusHandler: MembershipStatusHandler = nil,

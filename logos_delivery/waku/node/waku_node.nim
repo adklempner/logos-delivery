@@ -1,3 +1,4 @@
+import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
 import
@@ -41,7 +42,6 @@ import
     waku_store_sync,
     waku_filter_v2,
     waku_filter_v2/client as filter_client,
-    waku_filter_v2/common as filter_common,
     waku_metadata,
     waku_rendezvous/protocol,
     waku_rendezvous/client as rendezvous_client,
@@ -54,7 +54,6 @@ import
     waku_peer_exchange,
     rln,
     waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
-    compat/option_valueor,
     common/rate_limit/setting,
     common/callbacks,
     common/nimchronos,
@@ -64,7 +63,7 @@ import
     api/events/health_events,
     api/events/peer_events,
   ],
-  logos_delivery/api/events/kernel_events,
+  logos_delivery/api/events/kernel_events, # MessageSeenEvent
   logos_delivery/waku/discovery/waku_kademlia,
   logos_delivery/waku/net/[bound_ports, net_config],
   ./peer_manager,
@@ -123,7 +122,7 @@ type
     wakuAutoSharding*: Option[Sharding]
     enr*: enr.Record
     libp2pPing*: Ping
-    rng*: ref rand.HmacDrbgContext
+    rng*: crypto.Rng
     brokerCtx*: BrokerContext
     wakuRendezvous*: WakuRendezVous
     wakuRendezvousClient*: rendezvous_client.WakuRendezVousClient
@@ -137,14 +136,9 @@ type
     subscriptionManager*: SubscriptionManager
     wakuMix*: WakuMix
     wakuRlnGifter*: rln_gifter_protocol.WakuRlnGifter
-      ## Set when gifterService=true. Exposed so startNode can invoke its
-      ## registerHandler for the gifter's self-registration.
-    edgeTopicsHealth*: Table[PubsubTopic, TopicHealth]
-    edgeHealthEvent*: AsyncEvent
-    edgeHealthLoop: Future[void]
-    kademliaDiscoveryLoop*: Future[void]
     wakuKademlia*: WakuKademlia
     ports*: BoundPorts
+    relayReconnectFut*: Future[void]
 
   SubscriptionManager* = ref object of RootObj
     node*: WakuNode
@@ -199,18 +193,6 @@ proc getShardsGetter(node: WakuNode, configuredShards: seq[uint16]): GetShards =
       return shards
     return configuredShards
 
-proc getRelayMixHandler*(node: WakuNode): Option[WakuRelayHandler] =
-  ## Returns a handler for mix spam protection coordination messages if mix is mounted
-  if node.wakuMix.isNil():
-    return none(WakuRelayHandler)
-
-  let handler: WakuRelayHandler = proc(
-      pubsubTopic: PubsubTopic, message: WakuMessage
-  ): Future[void] {.async, gcsafe.} =
-    await node.wakuMix.handleMessage(pubsubTopic, message)
-
-  return some(handler)
-
 proc getCapabilitiesGetter(node: WakuNode): GetCapabilities =
   return proc(): seq[Capabilities] {.closure, gcsafe, raises: [].} =
     if node.wakuRelay.isNil():
@@ -236,7 +218,7 @@ proc new*(
     peerManager: PeerManager,
     rateLimitSettings: ProtocolRateLimitSettings = DefaultProtocolRateLimit,
     # TODO: make this argument required after tests are updated
-    rng: ref HmacDrbgContext = HmacDrbgContext.new(),
+    rng: crypto.Rng = crypto.newRng(),
 ): T {.raises: [Defect, LPError, IOError, TLSStreamProtocolError].} =
   ## Creates a Waku Node instance.
 
@@ -347,15 +329,12 @@ proc mountMix*(
     return err("Failed to convert multiaddress to string.")
   info "local addr", localaddr = localaddrStr
 
-  # Create callback to publish coordination messages via relay
   let publishMessage: PublishMessage = proc(
       message: WakuMessage
   ): Future[Result[void, string]] {.async.} =
-    # Inline implementation of publish logic to avoid circular import
     if node.wakuRelay.isNil():
       return err("WakuRelay not mounted")
 
-    # Derive pubsub topic from content topic using auto sharding
     let pubsubTopic =
       if node.wakuAutoSharding.isNone():
         return err("Auto sharding not configured")
@@ -363,7 +342,6 @@ proc mountMix*(
         node.wakuAutoSharding.get().getShard(message.contentTopic).valueOr:
           return err("Autosharding error: " & error)
 
-    # Publish via relay
     discard await node.wakuRelay.publish(pubsubTopic, message)
     return ok()
 
@@ -379,10 +357,32 @@ proc mountMix*(
     node.switch.mount(node.wakuMix)
   catchRes.isOkOr:
     return err(error.msg)
+  return ok()
 
-  # Note: start() is called later in WakuNode.start(), not here during mount
+proc mountKademlia*(
+    node: WakuNode, config: KademliaDiscoveryConf
+): Result[void, string] =
+  if not node.wakuKademlia.isNil():
+    return err("WakuKademlia already mounted, skipping")
+
+  let wk = WakuKademlia.new(
+    node.switch, node.peerManager, config.bootstrapNodes, config.servicesToAdvertise,
+    config.servicesToDiscover, config.randomLookupInterval,
+    config.serviceLookupInterval, node.rng, config.kadDhtConfig, config.discoConfig,
+    config.clientMode, config.xprPublishing,
+  ).valueOr:
+    return err("failed to create service discovery: " & error)
+
+  node.wakuKademlia = wk
+
+  let mountRes = catch:
+    node.switch.mount(wk.protocol)
+  mountRes.isOkOr:
+    return err("failed to mount service discovery: " & error.msg)
 
   return ok()
+
+## Waku Sync
 
 proc mountStoreSync*(
     node: WakuNode,
@@ -537,46 +537,6 @@ proc updateAnnouncedAddrWithPrimaryIpAddr*(node: WakuNode): Result[void, string]
 
   return ok()
 
-const EdgeTopicHealthyThreshold = 2
-
-proc calculateEdgeTopicHealth(node: WakuNode, shard: PubsubTopic): TopicHealth =
-  let filterPeers =
-    node.peerManager.getPeersForShard(filter_common.WakuFilterSubscribeCodec, shard)
-  let lightpushPeers =
-    node.peerManager.getPeersForShard(lightpush_protocol.WakuLightPushCodec, shard)
-
-  if filterPeers >= EdgeTopicHealthyThreshold and
-      lightpushPeers >= EdgeTopicHealthyThreshold:
-    return TopicHealth.SUFFICIENTLY_HEALTHY
-  elif filterPeers > 0 and lightpushPeers > 0:
-    return TopicHealth.MINIMALLY_HEALTHY
-
-  return TopicHealth.UNHEALTHY
-
-proc loopEdgeHealth(node: WakuNode) {.async.} =
-  while node.started:
-    await node.edgeHealthEvent.wait()
-    node.edgeHealthEvent.clear()
-
-    try:
-      for shard in node.edgeTopicsHealth.keys:
-        if not node.wakuRelay.isNil and node.wakuRelay.isSubscribed(shard):
-          continue
-
-        let oldHealth = node.edgeTopicsHealth.getOrDefault(shard, TopicHealth.UNHEALTHY)
-        let newHealth = node.calculateEdgeTopicHealth(shard)
-        if newHealth != oldHealth:
-          node.edgeTopicsHealth[shard] = newHealth
-          EventShardTopicHealthChange.emit(node.brokerCtx, shard, newHealth)
-    except CancelledError:
-      break
-    except CatchableError as e:
-      # KEEP: async health loop must survive transient peer-manager errors.
-      warn "Error in edge health check", error = e.msg
-
-    # safety cooldown to protect from edge cases
-    await sleepAsync(100.milliseconds)
-
 proc startProvidersAndListeners*(node: WakuNode) =
   RequestRelayShard.setProvider(
     node.brokerCtx,
@@ -665,16 +625,6 @@ proc start*(node: WakuNode) {.async.} =
     if isBindIpWithZeroPort(address):
       zeroPortPresent = true
 
-  # Perform relay-specific startup tasks TODO: this should be rethought
-  if not node.wakuRelay.isNil():
-    await node.wakuRelay.start()
-
-  if not node.wakuMix.isNil():
-    await node.wakuMix.start()
-
-  if not node.wakuMetadata.isNil():
-    await node.wakuMetadata.start()
-
   if not node.wakuStoreResume.isNil():
     await node.wakuStoreResume.start()
 
@@ -693,16 +643,17 @@ proc start*(node: WakuNode) {.async.} =
   ## NOTE: This will dispatch gossipsub start to the WakuRelay.start method override
   await node.switch.start()
 
-  # After switch.start, run custom Logos Delivery relay start logic
-  await node.reconnectRelayPeers()
-
-  # Kick off the DoS-protection registration broadcast now that peers are
-  # reconnected. Fire-and-forget: the proc returns immediately and an
-  # internal background task retries until the broadcast lands.
   if not node.wakuMix.isNil():
-    node.wakuMix.registerDoSProtectionWithNetwork()
+    await node.wakuMix.start()
+
+  # Reconnect to known relay peers in the background; it waits a prune backoff
+  # and must not block startup.
+  node.relayReconnectFut = node.reconnectRelayPeers()
 
   node.started = true
+
+  if not node.wakuKademlia.isNil():
+    await node.wakuKademlia.start()
 
   if not node.wakuFilterClient.isNil():
     node.wakuFilterClient.registerPushHandler(
@@ -726,9 +677,16 @@ proc start*(node: WakuNode) {.async.} =
 proc stop*(node: WakuNode) {.async.} =
   ## By stopping the switch we are stopping all the underlying mounted protocols
 
+  # Cancel the background relay reconnection (may still be in its backoff wait).
+  if not node.relayReconnectFut.isNil():
+    await node.relayReconnectFut.cancelAndWait()
+
   await node.subscriptionManager.stop()
 
   node.stopProvidersAndListeners()
+
+  if not node.wakuKademlia.isNil():
+    await node.wakuKademlia.stop()
 
   ## NOTE: This will dispatch gossipsub stop to the WakuRelay.stop method override
   await node.switch.stop()
@@ -739,7 +697,6 @@ proc stop*(node: WakuNode) {.async.} =
     try:
       await node.rln.stop() ## this can raise an exception
     except Exception:
-      # KEEP: shutdown path; continue tearing down other subsystems regardless.
       error "exception stopping the node", error = getCurrentExceptionMsg()
 
   if not node.wakuArchive.isNil():
@@ -751,9 +708,6 @@ proc stop*(node: WakuNode) {.async.} =
   if not node.wakuPeerExchangeClient.isNil() and
       not node.wakuPeerExchangeClient.pxLoopHandle.isNil():
     await node.wakuPeerExchangeClient.pxLoopHandle.cancelAndWait()
-
-  if not node.wakuKademlia.isNil():
-    await node.wakuKademlia.stop()
 
   if not node.wakuRendezvousClient.isNil():
     await node.wakuRendezvousClient.stopWait()
