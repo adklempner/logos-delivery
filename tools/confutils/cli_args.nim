@@ -976,9 +976,9 @@ proc toKeystoreGeneratorConf*(n: WakuNodeConf): RlnKeystoreGeneratorConf =
     credPassword: n.rlnRelayCredPassword,
   )
 
-proc toNetworkConf(
+proc toNetworkPresetConf(
     preset: string, clusterId: Option[uint16]
-): ConfResult[Option[NetworkConf]] =
+): ConfResult[Option[NetworkPresetConf]] =
   var lcPreset = toLowerAscii(preset)
   if clusterId.isSome() and clusterId.get() == 1:
     warn(
@@ -993,24 +993,24 @@ proc toNetworkConf(
 
   case lcPreset
   of "":
-    ok(none(NetworkConf))
+    ok(none(NetworkPresetConf))
   of "twn":
-    ok(some(NetworkConf.TheWakuNetworkConf()))
+    ok(some(NetworkPresetConf.TheWakuNetworkConf()))
   of "logos.dev", "logosdev":
-    ok(some(NetworkConf.LogosDevConf()))
+    ok(some(NetworkPresetConf.LogosDevConf()))
   of "logos.test", "logostest":
-    ok(some(NetworkConf.LogosTestConf()))
+    ok(some(NetworkPresetConf.LogosTestConf()))
   else:
     err("Invalid --preset value passed: " & lcPreset)
 
 proc toWakuConf*(n: WakuNodeConf): ConfResult[WakuConf] =
   var b = WakuConfBuilder.init()
 
-  let networkConf = toNetworkConf(n.preset, some(n.clusterId)).valueOr:
+  let networkConf = toNetworkPresetConf(n.preset, some(n.clusterId)).valueOr:
     return err("Error determining cluster from preset: " & $error)
 
   if networkConf.isSome():
-    b.withNetworkConf(networkConf.get())
+    b.withNetworkPresetConf(networkConf.get())
 
   b.withLogLevel(n.logLevel)
   b.withLogFormat(n.logFormat)
