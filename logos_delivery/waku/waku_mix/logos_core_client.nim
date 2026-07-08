@@ -1,6 +1,6 @@
 {.push raises: [].}
 
-import logos_delivery/waku/common/option_shims
+import logos_delivery/waku/compat/option_valueor
 
 ## Mix RLN client: fetches roots/proofs from logos-core via the C++ RLN module.
 ## The C++ delivery module registers an RLN fetcher at startup; event-push

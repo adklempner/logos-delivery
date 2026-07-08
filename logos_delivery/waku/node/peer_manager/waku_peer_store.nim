@@ -12,7 +12,7 @@ import
   libp2p_mix/pool
 
 import
-  ../../common/option_shims,
+  ../../compat/option_valueor,
   ../../waku_core,
   ../../waku_enr/sharding,
   ../../waku_enr/capabilities,

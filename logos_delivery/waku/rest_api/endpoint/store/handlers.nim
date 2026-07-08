@@ -4,7 +4,7 @@ import logos_delivery/waku/compat/option_valueor
 import
   std/[strformat, sugar], results, chronicles, uri, json_serialization, presto/route
 import
-  ../../../common/option_shims,
+  ../../../compat/option_valueor,
   ../../../waku_core,
   ../../../waku_store/common,
   ../../../waku_store/self_req_handler,

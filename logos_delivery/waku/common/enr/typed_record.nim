@@ -1,7 +1,7 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
-import logos_delivery/waku/common/option_shims
+import logos_delivery/waku/compat/option_valueor
 
 import std/options, results, eth/keys as eth_keys, libp2p/crypto/crypto as libp2p_crypto
 

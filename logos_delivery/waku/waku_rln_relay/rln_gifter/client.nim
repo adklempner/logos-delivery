@@ -1,6 +1,6 @@
 {.push raises: [].}
 
-import logos_delivery/waku/common/option_shims
+import logos_delivery/waku/compat/option_valueor
 
 import std/options, results, chronicles, chronos, bearssl/rand
 import libp2p/stream/connection

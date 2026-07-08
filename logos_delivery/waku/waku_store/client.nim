@@ -10,7 +10,7 @@ import
   metrics,
   bearssl/rand
 import
-  ../common/option_shims,
+  ../compat/option_valueor,
   ../node/peer_manager,
   ../utils/requests,
   ./protocol_metrics,

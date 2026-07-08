@@ -23,7 +23,7 @@ import
   ../net/net_config,
   ../waku_core,
   ../waku_core/codecs,
-  ../waku_rln_relay,
+  ../rln,
   ../waku_mix/logos_core_client as mix_lez_client,
   ../waku_mix/protocol as mix_protocol,
   mix_rln_spam_protection/onchain_group_manager,

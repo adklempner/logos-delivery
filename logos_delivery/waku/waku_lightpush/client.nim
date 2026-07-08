@@ -5,7 +5,7 @@ import logos_delivery/waku/compat/option_valueor
 import std/options, results, chronicles, chronos, metrics, bearssl/rand, stew/byteutils
 import libp2p/peerid, libp2p/stream/connection
 import
-  ../common/option_shims,
+  ../compat/option_valueor,
   ../waku_core/peers,
   ../node/peer_manager,
   ../utils/requests,

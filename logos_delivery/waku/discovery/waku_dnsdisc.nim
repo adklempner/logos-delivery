@@ -1,7 +1,7 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
-import logos_delivery/waku/common/option_shims
+import logos_delivery/waku/compat/option_valueor
 
 ## A set of utilities to integrate EIP-1459 DNS-based discovery
 ## for Waku v2 nodes.

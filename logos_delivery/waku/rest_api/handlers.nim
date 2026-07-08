@@ -1,7 +1,7 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
-import logos_delivery/waku/common/option_shims
+import logos_delivery/waku/compat/option_valueor
 
 import chronos, std/[options, sequtils], results
 import ../discovery/waku_discv5, ../waku_relay, ../waku_core, ./message_cache

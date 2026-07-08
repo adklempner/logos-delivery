@@ -14,7 +14,7 @@ import
   eth/p2p/discoveryv5/enr
 import
   ../common/nimchronos,
-  ../common/option_shims,
+  ../compat/option_valueor,
   ../common/protobuf,
   ../waku_enr,
   ../waku_core/codecs,
