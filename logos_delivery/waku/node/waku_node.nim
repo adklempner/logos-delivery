@@ -693,9 +693,6 @@ proc start*(node: WakuNode) {.async.} =
   ## NOTE: This will dispatch gossipsub start to the WakuRelay.start method override
   await node.switch.start()
 
-  if not node.wakuMix.isNil():
-    await node.wakuMix.start()
-
   # After switch.start, run custom Logos Delivery relay start logic
   await node.reconnectRelayPeers()
 

@@ -1,5 +1,5 @@
 import
-  std/[options, os, sequtils, json, strutils, sets],
+  std/[atomics, options, os, sequtils, json, strutils, sets],
   eth/common/[addresses, keys],
   chronicles,
   chronos,
@@ -196,6 +196,36 @@ proc setupProtocols(
         lezGm.setFetchCallbacks(fetchRoots, fetchProof)
         mix_lez_client.setGroupManagerRef(lezGm)
         info "Wired LEZ callbacks for mix RLN spam protection"
+
+        # On-demand roots-window refresh: verifyProof's root-miss branch
+        # (mix-hop verifier) fires this requester on the libp2p thread —
+        # flag-set only, non-blocking; the drain loop picks it up on the
+        # next chronos tick and pushes fresh roots into the plugin's
+        # tracker via applyHostRoots. Uses SYNC callRlnFetcher (not the
+        # async helper: see feedback_callrlnfetcherasync_segv memory —
+        # the async helper crashes with a cross-thread GC bug).
+        var refreshFlag {.global.}: Atomic[bool]
+        proc refreshRequester() {.gcsafe, raises: [].} =
+          refreshFlag.store(true, moRelaxed)
+        lezGm.setHostRefreshRequester(refreshRequester)
+
+        let gmRef = lezGm
+        proc rootsDrainLoop() {.async: (raises: [CancelledError]).} =
+          while true:
+            await sleepAsync(200.milliseconds)
+            if not refreshFlag.exchange(false, moRelaxed):
+              continue
+            let (configAccount, _) = mix_lez_client.getRlnConfig()
+            if configAccount.len == 0:
+              continue
+            let rootsRes =
+              mix_lez_client.callRlnFetcher("get_valid_roots", configAccount)
+            if rootsRes.isErr:
+              continue
+            let roots = mix_lez_client.parseRootsJson(rootsRes.get())
+            if roots.isOk:
+              gmRef.applyHostRoots(roots.get())
+        asyncSpawn rootsDrainLoop()
 
         # Mount RLN gifter server if configured
         if mixConf.gifterService:
