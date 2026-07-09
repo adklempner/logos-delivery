@@ -47,7 +47,10 @@ proc requestMembership*(
     requestId = request.requestId,
     identityCommitmentLen = identityCommitment.len
 
-  # Retry dial with backoff (gifter node may still be initializing)
+  # Retry dial with backoff. The gifter may be unreachable for minutes at a
+  # time: its own registration + on-chain confirmation runs synchronous RLN
+  # fetcher trips that freeze its event loop (worst on testnet, where block
+  # confirmation alone is 60-90s). Budget must outlast one full cycle.
   var connection: Connection
   var dialAttempts = 0
   while true:
@@ -56,10 +59,10 @@ proc requestMembership*(
       connection = connOpt.get()
       break
     dialAttempts += 1
-    if dialAttempts >= 5:
+    if dialAttempts >= 30:
       return err("failed to dial gifter peer after " & $dialAttempts & " attempts")
     warn "gifter dial failed, retrying", attempt = dialAttempts
-    await sleepAsync(seconds(5))
+    await sleepAsync(seconds(15))
 
   try:
     await connection.writeLP(request.encode().buffer)
