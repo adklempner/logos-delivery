@@ -127,6 +127,16 @@ extern "C"
   // header liblogosdelivery_kernel.h. It is intentionally not declared here so
   // this header only promises the stable Messaging / Reliable Channels surface.
 
+  // LEZ RLN FFI. Declared here so C++ consumers of the mix-lez fork
+  // (delivery_module_plugin) can link. Definitions live in
+  // library/declare_lib.nim.
+  typedef int (*logosdelivery_rln_fetcher_t)(const char *method, const char *params, void (*callback)(int, const char *, size_t, void *), void *callbackData, void *fetcherData);
+  void logosdelivery_set_rln_fetcher(void *ctx, logosdelivery_rln_fetcher_t fetcher, void *fetcherData);
+  int logosdelivery_set_rln_config(void *ctx, const char *configAccountId, int leafIndex);
+  void logosdelivery_set_rln_identity(void *ctx, const char *idSecretHashHex);
+  void logosdelivery_push_roots(void *ctx, const char *rootsJson);
+  void logosdelivery_push_proof(void *ctx, const char *proofJson);
+
 #ifdef __cplusplus
 }
 #endif
