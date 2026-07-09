@@ -2,6 +2,8 @@ import libp2p/crypto/crypto
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/compat/option_valueor
+
 import
   std/[options, strutils],
   results,

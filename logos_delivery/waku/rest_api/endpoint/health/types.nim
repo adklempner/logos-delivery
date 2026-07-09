@@ -1,6 +1,8 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/compat/option_valueor
+
 import results
 import chronicles, json_serialization, json_serialization/std/options
 import ../serdes

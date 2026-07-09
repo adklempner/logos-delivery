@@ -9,6 +9,7 @@ import
   ../node/peer_manager,
   ../utils/requests,
   ../waku_core,
+  ../compat/option_valueor,
   ./common,
   ./protocol_metrics,
   ./rpc,

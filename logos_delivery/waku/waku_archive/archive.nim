@@ -10,6 +10,7 @@ import
   metrics
 import
   ../common/paging,
+  ../compat/option_valueor,
   ./driver,
   ./retention_policy,
   ../waku_core,

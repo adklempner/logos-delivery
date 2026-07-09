@@ -1,6 +1,8 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/compat/option_valueor
+
 import std/options, chronos
 
 import ../common/enr, ../waku_enr/capabilities, ../waku_enr/sharding

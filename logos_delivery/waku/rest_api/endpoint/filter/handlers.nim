@@ -11,6 +11,7 @@ import
   presto/route,
   presto/common
 import
+  ../../../compat/option_valueor,
   ../../../waku_core,
   ../../../waku_node,
   ../../../node/peer_manager,

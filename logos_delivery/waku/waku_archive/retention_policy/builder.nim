@@ -1,6 +1,8 @@
 import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
+import logos_delivery/waku/compat/option_valueor
+
 import std/[strutils, options], regex, results
 import
   ../retention_policy,

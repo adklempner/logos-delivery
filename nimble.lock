@@ -8,7 +8,7 @@
       "downloadMethod": "git",
       "dependencies": [],
       "checksums": {
-        "sha1": "68bb85cbfb1832ce4db43943911b046c3af3caab"
+        "sha1": "a092a045d3a427d127a5334a6e59c76faff54686"
       }
     },
     "unittest2": {
@@ -50,8 +50,8 @@
       }
     },
     "jwt": {
-      "version": "#057ec95eb5af0eea9c49bfe9025b3312c95dc5f2",
-      "vcsRevision": "057ec95eb5af0eea9c49bfe9025b3312c95dc5f2",
+      "version": "#18f8378de52b241f321c1f9ea905456e89b95c6f",
+      "vcsRevision": "18f8378de52b241f321c1f9ea905456e89b95c6f",
       "url": "https://github.com/vacp2p/nim-jwt.git",
       "downloadMethod": "git",
       "dependencies": [
@@ -60,7 +60,7 @@
         "bearssl_pkey_decoder"
       ],
       "checksums": {
-        "sha1": "3cd368666fd2bc7f99f253452289e827abcac13c"
+        "sha1": "bcfd6fc9c5e10a52b87117219b7ab5c98136bc8e"
       }
     },
     "testutils": {
@@ -700,8 +700,8 @@
     },
     "libp2p_mix": {
       "version": "0.1.0",
-      "vcsRevision": "380513117d556bf8f70066f5e72a7fd74fe36ba6",
-      "url": "https://github.com/logos-co/nim-libp2p-mix",
+      "vcsRevision": "a93112306d6001faa745149d0756652c05bf9933",
+      "url": "https://github.com/adklempner/nim-libp2p-mix",
       "downloadMethod": "git",
       "dependencies": [
         "nim",
@@ -715,7 +715,7 @@
         "unittest2"
       ],
       "checksums": {
-        "sha1": "ccfb0f0160ac15ac970471964c730d57edacad91"
+        "sha1": "32f433a3c7ed98526a3908b3dc7e1099dc085111"
       }
     }
   },

@@ -11,6 +11,7 @@ import
   eth/p2p/discoveryv5/enr
 import
   ../common/nimchronos,
+  ../compat/option_valueor,
   ../node/peer_manager,
   ../waku_core,
   ../discovery/waku_discv5,
