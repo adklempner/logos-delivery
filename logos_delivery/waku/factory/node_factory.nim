@@ -17,6 +17,7 @@ import
   ./networks_config,
   ./waku_conf,
   ./builder,
+  ./lez_mix_setup,
   ./validator_signed,
   ../waku_enr/sharding,
   ../waku_node,
@@ -167,8 +168,17 @@ proc setupProtocols(
   #mount mix
   if conf.mixConf.isSome():
     let mixConf = conf.mixConf.get()
-    (await node.mountMix(conf.clusterId, mixConf.mixKey, mixConf.mixnodes)).isOkOr:
+    (
+      await node.mountMix(
+        conf.clusterId, mixConf.mixKey, mixConf.mixnodes, mixConf.userMessageLimit,
+        mixConf.disableSpamProtection,
+        useOnchainLEZ = mixConf.useOnchainLEZ,
+      )
+    ).isOkOr:
       return err("failed to mount waku mix protocol: " & $error)
+
+    (await node.setupLezMix(mixConf)).isOkOr:
+      return err("failed to set up LEZ mix RLN: " & error)
 
   # Setup service discovery
   if conf.kademliaDiscoveryConf.isSome():
@@ -452,6 +462,10 @@ proc startNode*(
   # Maintain relay connections
   if conf.relay:
     node.peerManager.start()
+
+  if conf.mixConf.isSome():
+    (await node.startLezMix(conf.mixConf.get())).isOkOr:
+      return err("failed to start LEZ mix RLN: " & error)
 
   return ok()
 

@@ -12,6 +12,7 @@ const
   KeyPreset = "preset"
   KeyMessagingOverrides = "messagingoverrides"
   KeyChannelsOverrides = "channelsoverrides"
+  KeyKernelOverrides = "kerneloverrides"
 
 proc parseMode(s: string): Result[WakuMode, string] =
   case s.strip().toLowerAscii()
@@ -75,12 +76,35 @@ proc parseLogosDeliveryConf*(jsonStr: string): ConfResult[LogosDeliveryConf] =
       ?parseOverrides[ReliableChannelManagerConf](v, "channelsOverrides")
     top.del(KeyChannelsOverrides)
 
+  var kernelOverrides: Option[JsonNode]
+  if top.hasKey(KeyKernelOverrides):
+    let (_, v) = top.getOrDefault(KeyKernelOverrides)
+    if v.kind != JObject:
+      return err("kernelOverrides must be a JSON object")
+    kernelOverrides = some(v)
+    top.del(KeyKernelOverrides)
+
   if top.len > 0:
     var keys: seq[string]
     for _, (k, _) in pairs(top):
       keys.add(k)
     return err("Unrecognized configuration option(s) found: " & keys.join(", "))
 
-  return LogosDeliveryConf.init(mode, preset, messagingOverrides, channelsOverrides)
+  var conf = ?LogosDeliveryConf.init(mode, preset, messagingOverrides, channelsOverrides)
+
+  # Advanced escape hatch: apply raw kernel (WakuNodeConf) fields, by field or
+  # CLI name, on top of the mode/preset/messaging-derived kernel config. Needed
+  # by consumers that tune kernel-only options the messaging surface does not
+  # mirror (e.g. mix, static peers, discovery details).
+  if kernelOverrides.isSome():
+    var fields = ?collectJsonFields(kernelOverrides.get())
+    ?applyJsonFieldsToConf(
+      conf.kernelConf,
+      fields,
+      "Failed to parse kernelOverrides field",
+      "Unrecognized kernelOverrides option(s) found",
+    )
+
+  return ok(conf)
 
 {.pop.}
