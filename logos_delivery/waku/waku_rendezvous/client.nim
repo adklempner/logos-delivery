@@ -1,4 +1,3 @@
-import logos_delivery/waku/compat/option_valueor
 {.push raises: [].}
 
 import
@@ -16,6 +15,7 @@ import
   logos_delivery/waku/node/peer_manager,
   logos_delivery/waku/waku_core/peers,
   logos_delivery/waku/waku_core/codecs,
+  logos_delivery/waku/compat/option_valueor,
   ./common,
   ./waku_peer_record
 
@@ -107,6 +107,8 @@ proc new*(
     switch: switch,
     rng: rng,
     sema: newAsyncSemaphore(MaxSimultanesousAdvertisements),
+    # libp2p 1.15.3 moved minDuration/maxDuration/minTTL/maxTTL onto
+    # GenericRendezVous.config (RendezVousConfig).
     config: RendezVousConfig(
       minDuration: rendezvous.MinimumAcceptedDuration,
       maxDuration: rendezvous.MaximumDuration,

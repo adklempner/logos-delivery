@@ -10,7 +10,12 @@ import
   metrics,
   bearssl/rand
 import
-  ../node/peer_manager, ../utils/requests, ./protocol_metrics, ./common, ./rpc_codec
+  ../compat/option_valueor,
+  ../node/peer_manager,
+  ../utils/requests,
+  ./protocol_metrics,
+  ./common,
+  ./rpc_codec
 
 logScope:
   topics = "waku store client"

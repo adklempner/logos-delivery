@@ -53,6 +53,7 @@ import
     waku_enr,
     waku_peer_exchange,
     rln,
+    waku_rln_relay/rln_gifter/protocol as rln_gifter_protocol,
     common/rate_limit/setting,
     common/callbacks,
     common/nimchronos,
@@ -134,6 +135,7 @@ type
       ## Kernel API Relay appHandlers (if any)
     subscriptionManager*: SubscriptionManager
     wakuMix*: WakuMix
+    wakuRlnGifter*: rln_gifter_protocol.WakuRlnGifter
     wakuKademlia*: WakuKademlia
     ports*: BoundPorts
     relayReconnectFut*: Future[void]
@@ -314,6 +316,9 @@ proc mountMix*(
     clusterId: uint16,
     mixPrivKey: Curve25519Key,
     mixnodes: seq[MixNodePubInfo],
+    userMessageLimit: Option[int] = none(int),
+    disableSpamProtection: bool = false,
+    useOnchainLEZ: bool = false,
 ): Future[Result[void, string]] {.async.} =
   info "mounting mix protocol", nodeId = node.info #TODO log the config used
 
@@ -324,8 +329,25 @@ proc mountMix*(
     return err("Failed to convert multiaddress to string.")
   info "local addr", localaddr = localaddrStr
 
+  let publishMessage: PublishMessage = proc(
+      message: WakuMessage
+  ): Future[Result[void, string]] {.async.} =
+    if node.wakuRelay.isNil():
+      return err("WakuRelay not mounted")
+
+    let pubsubTopic =
+      if node.wakuAutoSharding.isNone():
+        return err("Auto sharding not configured")
+      else:
+        node.wakuAutoSharding.get().getShard(message.contentTopic).valueOr:
+          return err("Autosharding error: " & error)
+
+    discard await node.wakuRelay.publish(pubsubTopic, message)
+    return ok()
+
   node.wakuMix = WakuMix.new(
-    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes
+    localaddrStr, node.peerManager, clusterId, mixPrivKey, mixnodes, publishMessage,
+    userMessageLimit, disableSpamProtection, useOnchainLEZ,
   ).valueOr:
     error "Waku Mix protocol initialization failed", err = error
     return
@@ -620,6 +642,9 @@ proc start*(node: WakuNode) {.async.} =
   ## The switch will update addresses after start using the addressMapper
   ## NOTE: This will dispatch gossipsub start to the WakuRelay.start method override
   await node.switch.start()
+
+  if not node.wakuMix.isNil():
+    await node.wakuMix.start()
 
   # Reconnect to known relay peers in the background; it waits a prune backoff
   # and must not block startup.
