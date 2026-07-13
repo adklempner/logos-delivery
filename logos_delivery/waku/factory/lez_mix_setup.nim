@@ -103,7 +103,7 @@ proc setupLezMix*(
 
     proc gifterSubmitOnce(
         idc: seq[byte], rateLimit: uint64
-    ): Result[uint64, string] {.gcsafe.} =
+    ): Future[Result[uint64, string]] {.async, gcsafe.} =
       let (configAccount, _) = mix_lez_client.getRlnConfig()
       if configAccount.len == 0:
         return err("RLN config not set on gifter node")
@@ -114,7 +114,12 @@ proc setupLezMix*(
         "{\"configAccountId\":\"" & configAccount & "\",\"userHoldingAccountId\":\"" &
         holdingAccount & "\",\"idCommitment\":\"" & idCommitmentHex &
         "\",\"rateLimit\":" & $rateLimit & "}"
-      let regResult = mix_lez_client.callRlnFetcher("register_member", params)
+      # ASYNC off-thread submit: register_member is a 60-90s QtRO→wallet→chain
+      # round-trip. Running it synchronously on the chronos loop froze the
+      # gifter (node stops serving libp2p / the gift protocol for the whole
+      # submit — the cause of the self-registration freeze). The off-thread
+      # path keeps the event loop live.
+      let regResult = await mix_lez_client.callRlnFetcherAsync("register_member", params)
       if regResult.isErr:
         return err(regResult.error)
       try:
@@ -144,7 +149,9 @@ proc setupLezMix*(
       let deadline = Moment.now() + chronos.milliseconds(deadlineMs)
       while Moment.now() < deadline:
         await sleepAsync(chronos.milliseconds(pollMs))
-        let raw = mix_lez_client.callRlnFetcher("is_member_registered", params)
+        # Off-thread: keep the gifter's event loop live across the whole
+        # multi-minute confirmation poll (same rationale as gifterSubmitOnce).
+        let raw = await mix_lez_client.callRlnFetcherAsync("is_member_registered", params)
         if raw.isErr:
           continue
         try:
@@ -167,7 +174,7 @@ proc setupLezMix*(
       const confirmDeadlineMs = 300_000
       while true:
         let job = await gifterQueue.popFirst()
-        let res = gifterSubmitOnce(job.identityCommitment, job.rateLimit)
+        let res = await gifterSubmitOnce(job.identityCommitment, job.rateLimit)
         if res.isErr:
           error "Gifter worker: submission failed",
             optimistic = job.assigned, err = res.error

@@ -206,24 +206,39 @@ proc callRlnFetcher*(methodName: string, params: string): Result[string, string]
       return err("RLN fetcher returned empty response")
     return ok(fetchResult.json)
 
+# Result buffers for the threaded path live in SHARED (non-GC) memory: the
+# fetcher callback fires on the worker thread, and allocating Nim GC strings
+# there and reading them back on the chronos thread is a cross-heap
+# reference under --mm:refc --threads:on (the historical SIGSEGV that shelved
+# callRlnFetcherAsync). The worker only ever touches raw shared buffers; the
+# Nim strings are reconstructed on the main thread after joinThread.
+type SharedFetchResult = object
+  jsonPtr: pointer
+  jsonLen: int
+  errPtr: pointer
+  errLen: int
+  success: bool
+
 type ThreadArgs = object
   fetcher: RlnFetcherFunc
   fetcherData: pointer
   methodBuf: cstring
   paramsBuf: cstring
-  res: ptr FetchResult
+  res: ptr SharedFetchResult
   sig: ThreadSignalPtr
 
 proc fetcherThreadBody(args: ThreadArgs) {.thread.} =
   let cb: RlnFetchCallback = proc(callerRet: cint, msg: ptr cchar, len: csize_t, userData: pointer) {.cdecl, gcsafe, raises: [].} =
-    let r = cast[ptr FetchResult](userData)
+    let r = cast[ptr SharedFetchResult](userData)
     if callerRet == 0 and not msg.isNil and len > 0:
-      r[].json = newString(len.int)
-      copyMem(addr r[].json[0], msg, len.int)
+      r[].jsonPtr = allocShared(len.int)
+      copyMem(r[].jsonPtr, msg, len.int)
+      r[].jsonLen = len.int
       r[].success = true
     elif not msg.isNil and len > 0:
-      r[].errMsg = newString(len.int)
-      copyMem(addr r[].errMsg[0], msg, len.int)
+      r[].errPtr = allocShared(len.int)
+      copyMem(r[].errPtr, msg, len.int)
+      r[].errLen = len.int
       r[].success = false
     else:
       r[].success = (callerRet == 0)
@@ -232,8 +247,9 @@ proc fetcherThreadBody(args: ThreadArgs) {.thread.} =
   discard args.sig.fireSync()
 
 proc callRlnFetcherAsync*(methodName: string, params: string): Future[Result[string, string]] {.async.} =
-  ## Runs the fetcher on a dedicated thread so HTTPS blocking calls don't
-  ## stall the chronos event loop.
+  ## Runs the fetcher on a dedicated thread so its blocking QtRO→wallet→chain
+  ## round-trip doesn't stall the chronos event loop. Result bytes cross the
+  ## thread boundary in shared memory only (no GC heap) — see SharedFetchResult.
   {.gcsafe.}:
     rlnFetcherLock.acquire()
     let fetcher = rlnFetcher
@@ -263,7 +279,7 @@ proc callRlnFetcherAsync*(methodName: string, params: string): Future[Result[str
       deallocShared(methodCopy)
       deallocShared(paramsCopy)
 
-    var fetchRes: FetchResult
+    var fetchRes = SharedFetchResult()
     var thread: Thread[ThreadArgs]
 
     createThread(thread, fetcherThreadBody,
@@ -279,13 +295,25 @@ proc callRlnFetcherAsync*(methodName: string, params: string): Future[Result[str
     await signal.wait()
     joinThread(thread)
 
+    # Rebuild GC strings on THIS (main) thread from the shared buffers, then
+    # release the shared memory.
+    defer:
+      if not fetchRes.jsonPtr.isNil:
+        deallocShared(fetchRes.jsonPtr)
+      if not fetchRes.errPtr.isNil:
+        deallocShared(fetchRes.errPtr)
+
     if not fetchRes.success:
-      if fetchRes.errMsg.len > 0:
-        return err(fetchRes.errMsg)
+      if fetchRes.errLen > 0 and not fetchRes.errPtr.isNil:
+        var e = newString(fetchRes.errLen)
+        copyMem(addr e[0], fetchRes.errPtr, fetchRes.errLen)
+        return err(e)
       return err("RLN fetcher async call failed")
-    if fetchRes.json.len == 0:
+    if fetchRes.jsonLen == 0 or fetchRes.jsonPtr.isNil:
       return err("RLN fetcher returned empty response")
-    return ok(fetchRes.json)
+    var j = newString(fetchRes.jsonLen)
+    copyMem(addr j[0], fetchRes.jsonPtr, fetchRes.jsonLen)
+    return ok(j)
 
 proc bytesToHexUpper*(bytes: openArray[byte]): string =
   ## Uppercase hex without "0x" prefix. LEZ JSON RPC accepts both cases;
