@@ -1,4 +1,4 @@
-import std/json
+import std/[json, os]
 import chronos, chronicles, results, ffi
 import brokers/broker_context
 import libp2p/peerid # pull PeerId pretty string formatting
@@ -179,14 +179,25 @@ proc logosdelivery_create_node(
 
   return ok(lib)
 
-# Minimal RLN bring-up values. Placeholders: no config field carries the RLN
-# module's registry / identifier yet, so they are hardcoded here for now.
-const
-  RlnBringupRegistryId =
-    "logos:testnet:0000000000000000000000000000000000000000000000000000000000000000"
-  RlnBringupIdentifier =
-    "0000000000000000000000000000000000000000000000000000000000000001"
-  RlnBringupOptions = """[{"key":"rate_limit","value":"100"}]"""
+# Minimal RLN bring-up values. No config field carries the RLN module's
+# registry / identifier yet; env vars parameterize the bring-up (so an
+# acceptance harness can point it at a live registry) with the previous
+# placeholders as defaults. Procs, not globals: start_node is async and a
+# GC'ed global would not be GC-safe there.
+proc rlnBringupRegistryId(): string =
+  getEnv(
+    "LOGOS_DELIVERY_RLN_REGISTRY_ID",
+    "logos:testnet:0000000000000000000000000000000000000000000000000000000000000000",
+  )
+
+proc rlnBringupIdentifier(): string =
+  getEnv(
+    "LOGOS_DELIVERY_RLN_IDENTIFIER",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+  )
+
+proc rlnBringupOptions(): string =
+  getEnv("LOGOS_DELIVERY_RLN_OPTIONS", """[{"key":"rate_limit","value":"100"}]""")
 
 proc logosdelivery_start_node(
     self: LogosDelivery
@@ -206,8 +217,9 @@ proc logosdelivery_start_node(
       notice "RLN module start failed", reason = rlnStartRes.error()
     else:
       info "RLN module started", response = rlnStartRes.get()
-      let rlnRegRes =
-        await rlnRegister(RlnBringupRegistryId, RlnBringupIdentifier, RlnBringupOptions)
+      let rlnRegRes = await rlnRegister(
+        rlnBringupRegistryId(), rlnBringupIdentifier(), rlnBringupOptions()
+      )
       if rlnRegRes.isErr():
         notice "RLN register_membership failed", reason = rlnRegRes.error()
       else:
