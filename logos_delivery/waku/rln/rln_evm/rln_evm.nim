@@ -29,6 +29,8 @@ import
 import
   logos_delivery/waku/
     [common/error_handling, waku_core, requests/rln_requests, waku_keystore]
+# import nil: the client-facing types collide with this directory's legacy names
+from logos_delivery/waku/rln/types as rln_api_types import nil
 
 # Re-export the submodules so existing `import rln`
 # callers see the moved symbols
@@ -228,10 +230,17 @@ proc mount(
   RequestGenerateRlnProof.setProvider(
     rlnEvm.brokerCtx,
     proc(
-        msg: WakuMessage, senderEpochTime: float64
+        message: WakuMessage,
+        registryId: rln_api_types.RegistryId,
+        rlnIdentifier: rln_api_types.RlnIdentifier,
+        timestamp: uint64,
     ): Future[Result[RequestGenerateRlnProof, string]] {.async.} =
+      # The legacy zerokit path keeps its registry/identifier in the group
+      # manager, so only the signal and the sender epoch time are used here.
       let proofBytes = (
-        await rlnEvm.generateRLNProofWithRootRefresh(msg.toRLNSignal(), senderEpochTime)
+        await rlnEvm.generateRLNProofWithRootRefresh(
+          message.toRLNSignal(), float64(timestamp)
+        )
       ).valueOr:
         return err("Could not create RLN proof: " & error)
       return ok(RequestGenerateRlnProof(proof: proofBytes)),
